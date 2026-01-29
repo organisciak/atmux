@@ -13,9 +13,20 @@ install: build
 	cp $(BINARY_NAME) /usr/local/bin/
 	@echo "Installed to /usr/local/bin/$(BINARY_NAME)"
 
+install-brew: build
+	cp $(BINARY_NAME) /opt/homebrew/bin/
+	@echo "Installed to /opt/homebrew/bin/$(BINARY_NAME)"
+
 install-home: build
-	cp $(BINARY_NAME) ~/bin/
-	@echo "Installed to ~/bin/$(BINARY_NAME)"
+	@# Avoid conflict if source dir is ~/bin/agent-tmux
+	@if [ -d ~/bin/$(BINARY_NAME) ]; then \
+		cp $(BINARY_NAME) ~/bin/$(BINARY_NAME)/$(BINARY_NAME).bin && \
+		ln -sf ~/bin/$(BINARY_NAME)/$(BINARY_NAME).bin ~/bin/$(BINARY_NAME)-cli && \
+		echo "Installed to ~/bin/$(BINARY_NAME)-cli (symlink to avoid dir conflict)"; \
+	else \
+		cp $(BINARY_NAME) ~/bin/; \
+		echo "Installed to ~/bin/$(BINARY_NAME)"; \
+	fi
 
 clean:
 	rm -f $(BINARY_NAME)
