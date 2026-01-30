@@ -45,14 +45,7 @@ func (m *Model) renderInputBar() string {
 	// Help button
 	helpBtn := helpButtonStyle.Render("?")
 
-	// Refresh hint
-	hint := " [r]efresh [a]ttach [/]input [?]help"
-	if m.options.DebugMode {
-		hint += " [m]ethod"
-	}
-	hintStyled := lipgloss.NewStyle().Foreground(dimColor).Render(hint)
-
-	content := lipgloss.JoinHorizontal(lipgloss.Center, label, input, hintStyled, " ", helpBtn)
+	content := lipgloss.JoinHorizontal(lipgloss.Center, label, input, " ", helpBtn)
 	return style.Width(m.width - 4).Render(content)
 }
 
@@ -209,6 +202,17 @@ func (m Model) renderPreview() string {
 // renderStatusBar renders the status bar at the bottom
 func (m Model) renderStatusBar() string {
 	var parts []string
+
+	// Keyboard shortcuts hint (only shown when not in input mode)
+	if m.focused != FocusInput {
+		hint := "[r]efresh [a]ttach [/]input [?]help"
+		if m.options.DebugMode {
+			hint += " [m]ethod"
+		}
+		parts = append(parts, lipgloss.NewStyle().Foreground(dimColor).Render(hint))
+	} else {
+		parts = append(parts, lipgloss.NewStyle().Foreground(dimColor).Render("[Enter]send [Esc]exit"))
+	}
 
 	// Debug mode: show send method
 	if m.options.DebugMode {
