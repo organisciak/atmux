@@ -198,6 +198,7 @@ func TestMouseClickIconTogglesExpand(t *testing.T) {
 		t.Fatalf("expected 3 nodes when expanded, got %d", len(m.flatNodes))
 	}
 
+	// Tree content starts at inputHeight + 2 (input bar + tree border + padding)
 	y := inputHeight + 2
 	updated, _ := m.handleLeftClick(0, y)
 	m = updated.(Model)

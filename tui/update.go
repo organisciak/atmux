@@ -415,7 +415,8 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 		m.commandInput.Blur()
 
 		// Calculate which tree item was clicked
-		treeStartY := inputHeight + 1
+		// inputHeight (3) + tree top border (1) + tree content padding (1) = 5
+		treeStartY := inputHeight + 2
 		clickedIdx := y - treeStartY
 		if clickedIdx >= 0 && clickedIdx < len(m.flatNodes) {
 			node := m.flatNodes[clickedIdx]

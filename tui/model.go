@@ -275,7 +275,8 @@ func (m *Model) calculateButtonZones() {
 		treeHeight = 1
 	}
 
-	buttonYOffset := inputHeight + 1
+	// inputHeight (3) + tree top border (1) + tree content padding (1) = 5
+	buttonYOffset := inputHeight + 2
 	buttonGap := 1
 
 	// Button widths (text + padding(0,1) on each side)
