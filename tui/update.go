@@ -1,0 +1,551 @@
+package tui
+
+import (
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/porganisciak/agent-tmux/tmux"
+)
+
+// Update handles messages and updates state
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		return m.handleKeyMsg(msg)
+
+	case tea.MouseMsg:
+		return m.handleMouseMsg(msg)
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.calculateLayout()
+		m.commandInput.Width = m.width - 20
+		return m, nil
+
+	case TreeRefreshedMsg:
+		if msg.Err != nil {
+			m.lastError = msg.Err
+		} else {
+			m.tree = msg.Tree
+			m.rebuildFlatNodes()
+			m.lastError = nil
+
+			// Fetch preview for selected node
+			if node := m.selectedNode(); node != nil && node.Type == "pane" {
+				cmds = append(cmds, fetchPreview(node.Target))
+			}
+		}
+		// Schedule next refresh
+		if m.options.RefreshInterval > 0 {
+			cmds = append(cmds, tickCmd(m.options.RefreshInterval))
+		}
+		return m, tea.Batch(cmds...)
+
+	case PreviewUpdatedMsg:
+		if msg.Err == nil && msg.Target == m.previewTarget {
+			m.previewContent = msg.Content
+			m.previewPort.SetContent(msg.Content)
+			m.previewPort.GotoBottom()
+		}
+		return m, nil
+
+	case CommandSentMsg:
+		if msg.Err != nil {
+			m.lastError = msg.Err
+		} else {
+			m.lastSent = msg.Command + " -> " + msg.Target
+			// Refresh preview after sending
+			cmds = append(cmds, fetchPreview(msg.Target))
+		}
+		return m, tea.Batch(cmds...)
+
+	case TickMsg:
+		// Auto-refresh tree
+		cmds = append(cmds, fetchTree)
+		// Also refresh preview if we have a selected pane
+		if node := m.selectedNode(); node != nil && node.Type == "pane" {
+			cmds = append(cmds, fetchPreview(node.Target))
+		}
+		return m, tea.Batch(cmds...)
+	}
+
+	// Update focused component
+	switch m.focused {
+	case FocusInput:
+		var cmd tea.Cmd
+		m.commandInput, cmd = m.commandInput.Update(msg)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case FocusPreview:
+		var cmd tea.Cmd
+		m.previewPort, cmd = m.previewPort.Update(msg)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+
+	return m, tea.Batch(cmds...)
+}
+
+// handleKeyMsg handles keyboard input
+func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	if msg.String() != "ctrl+c" {
+		m.ctrlCPrimed = false
+	}
+
+	// Close help overlay first if open
+	if m.showHelp {
+		switch msg.String() {
+		case "?", "esc", "q", "enter", " ":
+			m.showHelp = false
+			return m, nil
+		}
+		return m, nil // Ignore other keys while help is open
+	}
+
+	// Global keys
+	switch msg.String() {
+	case "?":
+		m.showHelp = true
+		return m, nil
+	case "ctrl+c", "q":
+		if msg.String() == "q" && m.focused != FocusInput {
+			return m, tea.Quit
+		}
+		if msg.String() == "ctrl+c" {
+			if m.focused == FocusInput {
+				if m.commandInput.Value() != "" {
+					m.pushInputHistory(m.commandInput.Value())
+					m.commandInput.SetValue("")
+					m.commandInput.CursorEnd()
+					m.lastInputVal = ""
+					m.ctrlCPrimed = true
+					return m, nil
+				}
+				if m.ctrlCPrimed {
+					return m, tea.Quit
+				}
+				m.ctrlCPrimed = true
+				return m, nil
+			}
+			if m.ctrlCPrimed {
+				return m, tea.Quit
+			}
+			m.ctrlCPrimed = true
+			return m, nil
+		}
+	case "esc":
+		if m.focused == FocusInput {
+			if m.commandInput.Value() != "" {
+				m.pushInputHistory(m.commandInput.Value())
+				m.commandInput.SetValue("")
+				m.commandInput.CursorEnd()
+				m.lastInputVal = ""
+			}
+			m.ctrlCPrimed = false
+			return m, nil
+		}
+		return m, tea.Quit
+	case "tab":
+		m.cycleFocus(1)
+		return m, nil
+	case "shift+tab":
+		m.cycleFocus(-1)
+		return m, nil
+	case "/":
+		// Only focus input if not already focused (so "/" can be typed)
+		if m.focused != FocusInput {
+			m.focused = FocusInput
+			m.commandInput.Focus()
+			return m, nil
+		}
+	case "r":
+		if m.focused != FocusInput {
+			return m, fetchTree
+		}
+	case "m":
+		// Cycle through send methods (debug mode)
+		if m.focused != FocusInput && m.options.DebugMode {
+			m.sendMethod = (m.sendMethod + 1) % tmux.SendMethodCount
+			return m, nil
+		}
+	case "M":
+		if m.focused != FocusInput {
+			m.mouseEnabled = !m.mouseEnabled
+			if m.mouseEnabled {
+				return m, tea.EnableMouseCellMotion
+			}
+			return m, tea.DisableMouse
+		}
+	}
+
+	// Focus-specific keys
+	switch m.focused {
+	case FocusTree:
+		return m.handleTreeKeys(msg)
+	case FocusInput:
+		return m.handleInputKeys(msg)
+	case FocusPreview:
+		return m.handlePreviewKeys(msg)
+	}
+
+	return m, tea.Batch(cmds...)
+}
+
+// handleTreeKeys handles keys when tree is focused
+func (m Model) handleTreeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		m.moveSelection(-1)
+		return m, m.updatePreviewForSelection()
+	case "down", "j":
+		m.moveSelection(1)
+		return m, m.updatePreviewForSelection()
+	case "enter", " ":
+		m.toggleExpand()
+		return m, nil
+	case "a":
+		// Attach to selected session/window/pane
+		if node := m.selectedNode(); node != nil {
+			if session := sessionFromNode(node); session != "" {
+				m.attachSession = session
+				return m, tea.Quit
+			}
+		}
+	case "s":
+		// Send command to selected pane
+		if node := m.selectedNode(); node != nil && node.Type == "pane" {
+			cmd := m.commandInput.Value()
+			if cmd != "" {
+				m.pushInputHistory(cmd)
+				return m, sendCommand(node.Target, cmd, m.sendMethod)
+			}
+		}
+	}
+	return m, nil
+}
+
+// handleInputKeys handles keys when input is focused
+func (m Model) handleInputKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up":
+		if len(m.inputHistory) == 0 {
+			return m, nil
+		}
+		if m.historyIndex == -1 {
+			m.historyIndex = len(m.inputHistory)
+		}
+		if m.historyIndex == len(m.inputHistory) {
+			m.historyDraft = m.commandInput.Value()
+		}
+		if m.historyIndex > 0 {
+			m.historyIndex--
+		}
+		m.commandInput.SetValue(m.inputHistory[m.historyIndex])
+		m.commandInput.CursorEnd()
+		return m, nil
+	case "down":
+		if len(m.inputHistory) == 0 || m.historyIndex == -1 {
+			return m, nil
+		}
+		if m.historyIndex < len(m.inputHistory) {
+			m.historyIndex++
+		}
+		if m.historyIndex >= len(m.inputHistory) {
+			m.commandInput.SetValue(m.historyDraft)
+			m.commandInput.CursorEnd()
+			return m, nil
+		}
+		m.commandInput.SetValue(m.inputHistory[m.historyIndex])
+		m.commandInput.CursorEnd()
+		return m, nil
+	case "enter":
+		// Send to selected pane
+		if node := m.selectedNode(); node != nil && node.Type == "pane" {
+			cmd := m.commandInput.Value()
+			if cmd != "" {
+				m.pushInputHistory(cmd)
+				return m, sendCommand(node.Target, cmd, m.sendMethod)
+			}
+		}
+		return m, nil
+	}
+
+	// Pass to text input
+	prevValue := m.commandInput.Value()
+	var cmd tea.Cmd
+	m.commandInput, cmd = m.commandInput.Update(msg)
+	newValue := m.commandInput.Value()
+	if newValue != "" && !isDeletionKey(msg) {
+		m.lastInputVal = newValue
+	}
+	if prevValue != "" && newValue == "" {
+		candidate := prevValue
+		if m.lastInputVal != "" {
+			candidate = m.lastInputVal
+		}
+		m.pushInputHistory(candidate)
+		m.lastInputVal = ""
+	}
+	return m, cmd
+}
+
+func isDeletionKey(msg tea.KeyMsg) bool {
+	switch msg.Type {
+	case tea.KeyBackspace, tea.KeyDelete:
+		return true
+	}
+	switch msg.String() {
+	case "ctrl+w", "ctrl+u", "ctrl+k":
+		return true
+	}
+	return false
+}
+
+// handlePreviewKeys handles keys when preview is focused
+func (m Model) handlePreviewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.previewPort, cmd = m.previewPort.Update(msg)
+	return m, cmd
+}
+
+// handleMouseMsg handles mouse input
+func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Close help on any click
+	if m.showHelp && msg.Action == tea.MouseActionPress {
+		m.showHelp = false
+		return m, nil
+	}
+
+	switch msg.Action {
+	case tea.MouseActionPress:
+		if msg.Button == tea.MouseButtonLeft {
+			if m.isOnDivider(msg.X, msg.Y) {
+				m.resizing = true
+				m.resizeTreeWidth(msg.X)
+				return m, nil
+			}
+			return m.handleLeftClick(msg.X, msg.Y)
+		}
+	case tea.MouseActionMotion:
+		if m.resizing {
+			m.resizeTreeWidth(msg.X)
+			return m, nil
+		}
+		// Track hover for button highlighting
+		m.hoverIndex = -1
+		// Could track hover state here for button highlighting
+	case tea.MouseActionRelease:
+		if m.resizing {
+			m.resizing = false
+			return m, nil
+		}
+	}
+
+	// Pass scroll to appropriate component
+	if msg.Action == tea.MouseActionPress {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
+			if m.focused == FocusPreview {
+				var cmd tea.Cmd
+				m.previewPort, cmd = m.previewPort.Update(msg)
+				return m, cmd
+			}
+		}
+	}
+
+	return m, nil
+}
+
+// handleLeftClick handles left mouse clicks
+func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
+	// Check if clicking a button
+	if zone, ok := m.findButtonAt(x, y); ok {
+		switch zone.action {
+		case buttonActionSend:
+			cmd := m.commandInput.Value()
+			if cmd != "" {
+				m.pushInputHistory(cmd)
+				return m, sendCommand(zone.target, cmd, m.sendMethod)
+			}
+			return m, nil
+		case buttonActionEscape:
+			return m, sendEscape(zone.target)
+		case buttonActionAttach:
+			// Extract session from target and attach
+			session := sessionFromTarget(zone.target)
+			if session != "" {
+				m.attachSession = session
+				return m, tea.Quit
+			}
+			return m, nil
+		case buttonActionHelp:
+			m.showHelp = !m.showHelp
+			return m, nil
+		}
+	}
+
+	// Check regions for focus change
+	// Input area is at the top (rows 1-3)
+	if y <= inputHeight {
+		m.focused = FocusInput
+		m.commandInput.Focus()
+		return m, nil
+	}
+
+	// Tree is on the left
+	if x < m.treeWidth+2 {
+		m.focused = FocusTree
+		m.commandInput.Blur()
+
+		// Calculate which tree item was clicked
+		treeStartY := inputHeight + 2
+		clickedIdx := y - treeStartY
+		if clickedIdx >= 0 && clickedIdx < len(m.flatNodes) {
+			node := m.flatNodes[clickedIdx]
+			m.selectedIndex = clickedIdx
+			if node.Type == "session" || node.Type == "window" {
+				indent := node.Level * 2
+				icon := getNodeIcon(node.Type, node.Expanded, node.Active)
+				iconStartX := indent
+				iconEndX := iconStartX + lipgloss.Width(icon)
+				if x >= iconStartX && x < iconEndX {
+					m.toggleExpand()
+					return m, nil
+				}
+			}
+			// Double-click to attach (works for sessions, windows, and panes)
+			if clickedIdx == m.lastClickIdx &&
+				time.Since(m.lastClickAt) <= doubleClickThreshold {
+				if session := sessionFromNode(node); session != "" {
+					m.attachSession = session
+					return m, tea.Quit
+				}
+			}
+			m.lastClickIdx = clickedIdx
+			m.lastClickAt = time.Now()
+			return m, m.updatePreviewForSelection()
+		}
+	} else {
+		// Preview is on the right
+		m.focused = FocusPreview
+		m.commandInput.Blur()
+	}
+
+	return m, nil
+}
+
+// cycleFocus cycles through focusable components
+func (m *Model) cycleFocus(delta int) {
+	m.commandInput.Blur()
+
+	focusOrder := []FocusedComponent{FocusTree, FocusInput, FocusPreview}
+	current := 0
+	for i, f := range focusOrder {
+		if f == m.focused {
+			current = i
+			break
+		}
+	}
+
+	current = (current + delta + len(focusOrder)) % len(focusOrder)
+	m.focused = focusOrder[current]
+
+	if m.focused == FocusInput {
+		m.commandInput.Focus()
+	}
+}
+
+// updatePreviewForSelection fetches preview if a pane is selected
+func (m *Model) updatePreviewForSelection() tea.Cmd {
+	if node := m.selectedNode(); node != nil && node.Type == "pane" {
+		m.previewTarget = node.Target
+		return fetchPreview(node.Target)
+	}
+	return nil
+}
+
+func (m *Model) pushInputHistory(value string) {
+	entry := value
+	if entry == "" {
+		return
+	}
+	if len(m.inputHistory) > 0 && m.inputHistory[len(m.inputHistory)-1] == entry {
+		m.historyIndex = -1
+		m.historyDraft = ""
+		return
+	}
+	m.inputHistory = append(m.inputHistory, entry)
+	m.historyIndex = -1
+	m.historyDraft = ""
+}
+
+func sessionFromNode(node *tmux.TreeNode) string {
+	if node == nil {
+		return ""
+	}
+	if node.Type == "session" {
+		if node.Target != "" {
+			return node.Target
+		}
+		return node.Name
+	}
+	if idx := strings.Index(node.Target, ":"); idx != -1 {
+		return node.Target[:idx]
+	}
+	return node.Target
+}
+
+func sessionFromTarget(target string) string {
+	if target == "" {
+		return ""
+	}
+	if idx := strings.Index(target, ":"); idx != -1 {
+		return target[:idx]
+	}
+	return target
+}
+
+func (m *Model) isOnDivider(x, y int) bool {
+	if y <= inputHeight || y >= m.height-statusHeight {
+		return false
+	}
+	dividerX := m.treeWidth - 1
+	return x >= dividerX-1 && x <= dividerX+1
+}
+
+func (m *Model) resizeTreeWidth(x int) {
+	availableWidth := m.width - 4
+	maxTreeWidth := availableWidth - minPreviewWidth
+	if maxTreeWidth < minTreeWidth {
+		return
+	}
+
+	newTreeWidth := x + 1
+	if newTreeWidth < minTreeWidth {
+		newTreeWidth = minTreeWidth
+	}
+	if newTreeWidth > maxTreeWidth {
+		newTreeWidth = maxTreeWidth
+	}
+	if newTreeWidth == m.treeWidth {
+		return
+	}
+
+	m.treeWidth = newTreeWidth
+	m.previewWidth = availableWidth - m.treeWidth
+	previewHeight := m.height - inputHeight - statusHeight - 4
+	if previewHeight < 5 {
+		previewHeight = 5
+	}
+	m.previewPort.Width = m.previewWidth - 2
+	m.previewPort.Height = previewHeight
+}

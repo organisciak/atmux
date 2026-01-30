@@ -18,6 +18,12 @@ type Session struct {
 	DiagScript string
 }
 
+// SessionLine mirrors a single line from `tmux list-sessions`.
+type SessionLine struct {
+	Name string
+	Line string
+}
+
 // NewSession creates a new session configuration based on the current directory
 func NewSession(workingDir string) *Session {
 	basename := filepath.Base(workingDir)
@@ -141,6 +147,21 @@ func (s *Session) Attach() error {
 	return cmd.Run()
 }
 
+// AttachToSession attaches or switches to the given tmux session.
+func AttachToSession(name string) error {
+	if name == "" {
+		return nil
+	}
+	if os.Getenv("TMUX") != "" {
+		return exec.Command("tmux", "switch-client", "-t", name).Run()
+	}
+	cmd := exec.Command("tmux", "attach-session", "-t", name)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // Kill kills the tmux session
 func (s *Session) Kill() error {
 	return s.run("kill-session", "-t", s.Name)
@@ -169,6 +190,34 @@ func ListSessions() ([]string, error) {
 		}
 	}
 	return sessions, nil
+}
+
+// ListSessionsRaw returns tmux list-sessions output with parsed names.
+func ListSessionsRaw() ([]SessionLine, error) {
+	cmd := exec.Command("tmux", "list-sessions")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	var sessions []SessionLine
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		sessions = append(sessions, parseSessionLine(line))
+	}
+	return sessions, nil
+}
+
+func parseSessionLine(line string) SessionLine {
+	trimmed := strings.TrimSpace(line)
+	name := trimmed
+	if idx := strings.Index(trimmed, ":"); idx != -1 {
+		name = trimmed[:idx]
+	}
+	return SessionLine{Name: name, Line: trimmed}
 }
 
 // KillSession kills a session by name
