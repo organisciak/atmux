@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	popupMode       bool
+	noPopupMode     bool
 	refreshInterval int
 	debugMode       bool
 )
@@ -61,7 +61,7 @@ Debug Mode (--debug):
 
 func init() {
 	rootCmd.AddCommand(browseCmd)
-	browseCmd.Flags().BoolVarP(&popupMode, "popup", "p", false, "Launch as tmux popup overlay (requires tmux 3.2+)")
+	browseCmd.Flags().BoolVar(&noPopupMode, "no-popup", false, "Disable popup mode (default: popup when inside tmux)")
 	browseCmd.Flags().IntVarP(&refreshInterval, "refresh", "r", 2, "Auto-refresh interval in seconds (0 to disable)")
 	browseCmd.Flags().BoolVarP(&debugMode, "debug", "d", false, "Enable debug mode to test different send methods")
 }
@@ -72,8 +72,10 @@ func runBrowse(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("tmux server not running - start a tmux session first")
 	}
 
-	if popupMode {
-		return launchAsPopup()
+	// Default to popup when inside tmux, unless --no-popup is set
+	insideTmux := os.Getenv("TMUX") != ""
+	if insideTmux && !noPopupMode {
+		return launchAsPopup("browse")
 	}
 
 	// Run TUI directly
@@ -90,26 +92,29 @@ func tmuxServerRunning() bool {
 	return cmd.Run() == nil
 }
 
-func launchAsPopup() error {
-	// Check if we're inside tmux
-	if os.Getenv("TMUX") == "" {
-		return fmt.Errorf("--popup requires running inside a tmux session")
-	}
-
+// launchAsPopup launches the given command as a tmux popup overlay.
+// The command is re-launched with --no-popup to prevent infinite recursion.
+func launchAsPopup(command string, extraArgs ...string) error {
 	// Get the path to ourselves
 	selfPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("could not determine executable path: %w", err)
 	}
 
-	// Launch as popup
-	// Using display-popup which is available in tmux 3.2+
-	tmuxCmd := exec.Command("tmux", "display-popup",
+	// Build command args: command --no-popup [extraArgs...]
+	cmdArgs := []string{command, "--no-popup"}
+	cmdArgs = append(cmdArgs, extraArgs...)
+
+	// Launch as popup using display-popup (tmux 3.2+)
+	tmuxArgs := []string{"display-popup",
 		"-E",        // Close popup when command exits
 		"-w", "90%", // Width
 		"-h", "90%", // Height
-		selfPath, "browse", // Run ourselves without --popup
-	)
+		selfPath,
+	}
+	tmuxArgs = append(tmuxArgs, cmdArgs...)
+
+	tmuxCmd := exec.Command("tmux", tmuxArgs...)
 	tmuxCmd.Stdin = os.Stdin
 	tmuxCmd.Stdout = os.Stdout
 	tmuxCmd.Stderr = os.Stderr
