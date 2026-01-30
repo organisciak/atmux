@@ -147,10 +147,15 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		if m.focused == FocusInput {
 			if m.commandInput.Value() != "" {
+				// First Esc: clear input and save to history
 				m.pushInputHistory(m.commandInput.Value())
 				m.commandInput.SetValue("")
 				m.commandInput.CursorEnd()
 				m.lastInputVal = ""
+			} else {
+				// Second Esc (input already empty): switch to tree panel
+				m.focused = FocusTree
+				m.commandInput.Blur()
 			}
 			m.ctrlCPrimed = false
 			return m, nil
