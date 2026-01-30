@@ -6,7 +6,8 @@ A CLI tool for managing tmux sessions optimized for AI coding workflows.
 
 - Creates tmux sessions with dedicated panes for AI coding agents (codex, claude)
 - Project-specific configuration via `.agent-tmux.conf`
-- Easy session management (list, attach, kill)
+- Interactive session browser with pane previews and command sending
+- Interactive sessions list with click-to-attach
 - Shell completions for bash, zsh, fish, and PowerShell
 
 ## Installation
@@ -44,14 +45,38 @@ This creates a session named `agent-my-app` with:
 ### Commands
 
 ```bash
-agent-tmux              # Start or attach to session for current directory
-agent-tmux list         # List all agent-tmux sessions
-agent-tmux attach NAME  # Attach to a specific session
-agent-tmux kill NAME    # Kill a specific session
-agent-tmux kill --all   # Kill all agent-tmux sessions
-agent-tmux init         # Create a .agent-tmux.conf template
-agent-tmux version      # Show version info
+agent-tmux                 # Start or attach to session for current directory
+agent-tmux list            # List all agent-tmux sessions
+agent-tmux sessions        # Interactive sessions list (click or select to attach)
+agent-tmux list-sessions   # Alias for sessions
+agent-tmux browse          # Interactive session browser with pane previews
+agent-tmux attach NAME     # Attach to a specific session
+agent-tmux kill NAME       # Kill a specific session
+agent-tmux kill --all      # Kill all agent-tmux sessions
+agent-tmux init            # Create a .agent-tmux.conf template
+agent-tmux version         # Show version info
 ```
+
+#### Browse mode
+
+```bash
+agent-tmux browse
+```
+
+- Tree view of sessions, windows, and panes
+- Live preview of selected pane output
+- Send commands (and Escape) to a pane
+- Mouse and keyboard navigation
+- Optional popup mode: `agent-tmux browse --popup`
+
+#### Sessions TUI
+
+```bash
+agent-tmux sessions
+```
+
+- Click or select a session to attach
+- Renders inline by default
 
 ## Configuration
 

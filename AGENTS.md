@@ -36,6 +36,11 @@
 - The default config template is generated via `agent-tmux init`.
 - The diagnostics script is resolved from common install locations (e.g., `/usr/local/bin/agent-tmux-diag.sh`).
 
+## CLI Feature Notes
+- `agent-tmux sessions` is an interactive list with click-to-attach behavior.
+- `agent-tmux browse` opens a tree-based TUI with pane previews and command sending.
+- `agent-tmux browse --popup` uses a tmux popup overlay (tmux 3.2+).
+
 <!-- bv-agent-instructions-v1 -->
 
 ---
