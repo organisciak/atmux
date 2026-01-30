@@ -45,16 +45,6 @@ func (m *Model) renderInputBar() string {
 	// Help button
 	helpBtn := helpButtonStyle.Render("?")
 
-	// Track help button zone (top-right area)
-	helpBtnWidth := lipgloss.Width(helpBtn)
-	m.buttonZones = append(m.buttonZones, buttonZone{
-		x:      m.width - helpBtnWidth - 4,
-		y:      1,
-		width:  helpBtnWidth,
-		height: 1,
-		action: buttonActionHelp,
-	})
-
 	// Refresh hint
 	hint := " [r]efresh [a]ttach [/]input [?]help"
 	if m.options.DebugMode {
@@ -77,15 +67,11 @@ func (m Model) renderMainContent() string {
 // renderTree renders the session/window/pane tree
 func (m *Model) renderTree() string {
 	var lines []string
-	m.buttonZones = nil // Reset button zones
 
 	treeHeight := m.height - inputHeight - statusHeight - 4
 	if treeHeight < 1 {
 		treeHeight = 1
 	}
-
-	// Calculate the Y offset for button zones (input bar + border)
-	buttonYOffset := inputHeight + 2
 
 	for i, node := range m.flatNodes {
 		if i >= treeHeight {
@@ -125,34 +111,6 @@ func (m *Model) renderTree() string {
 			escButton := escapeButtonStyle.Render("ESC")
 			attButton := attachButtonStyle.Render("ATT")
 			buttonsWidth := lipgloss.Width(sendButton) + len(buttonGap) + lipgloss.Width(escButton) + len(buttonGap) + lipgloss.Width(attButton)
-			buttonStartX := m.treeWidth - buttonsWidth
-
-			m.buttonZones = append(m.buttonZones, buttonZone{
-				x:      buttonStartX,
-				y:      buttonYOffset + i,
-				width:  lipgloss.Width(sendButton),
-				height: 1,
-				target: node.Target,
-				action: buttonActionSend,
-			})
-			sendEndX := buttonStartX + lipgloss.Width(sendButton) + len(buttonGap)
-			m.buttonZones = append(m.buttonZones, buttonZone{
-				x:      sendEndX,
-				y:      buttonYOffset + i,
-				width:  lipgloss.Width(escButton),
-				height: 1,
-				target: node.Target,
-				action: buttonActionEscape,
-			})
-			escEndX := sendEndX + lipgloss.Width(escButton) + len(buttonGap)
-			m.buttonZones = append(m.buttonZones, buttonZone{
-				x:      escEndX,
-				y:      buttonYOffset + i,
-				width:  lipgloss.Width(attButton),
-				height: 1,
-				target: node.Target,
-				action: buttonActionAttach,
-			})
 
 			// Pad line to push buttons to the right
 			lineLen := lipgloss.Width(line)
@@ -165,16 +123,6 @@ func (m *Model) renderTree() string {
 			// Sessions and windows get only ATT button
 			attButton := attachButtonStyle.Render("ATT")
 			buttonsWidth := lipgloss.Width(attButton)
-			buttonStartX := m.treeWidth - buttonsWidth
-
-			m.buttonZones = append(m.buttonZones, buttonZone{
-				x:      buttonStartX,
-				y:      buttonYOffset + i,
-				width:  lipgloss.Width(attButton),
-				height: 1,
-				target: node.Target,
-				action: buttonActionAttach,
-			})
 
 			// Pad line to push button to the right
 			lineLen := lipgloss.Width(line)

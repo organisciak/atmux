@@ -24,6 +24,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.calculateLayout()
+		m.calculateButtonZones()
 		m.commandInput.Width = m.width - 20
 		return m, nil
 
@@ -33,6 +34,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.tree = msg.Tree
 			m.rebuildFlatNodes()
+			m.calculateButtonZones()
 			m.lastError = nil
 
 			// Fetch preview for selected node
@@ -211,6 +213,7 @@ func (m Model) handleTreeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.updatePreviewForSelection()
 	case "enter", " ":
 		m.toggleExpand()
+		m.calculateButtonZones()
 		return m, nil
 	case "a":
 		// Attach to selected session/window/pane
@@ -407,7 +410,7 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 		m.commandInput.Blur()
 
 		// Calculate which tree item was clicked
-		treeStartY := inputHeight + 2
+		treeStartY := inputHeight + 1
 		clickedIdx := y - treeStartY
 		if clickedIdx >= 0 && clickedIdx < len(m.flatNodes) {
 			node := m.flatNodes[clickedIdx]
@@ -419,6 +422,7 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 				iconEndX := iconStartX + lipgloss.Width(icon)
 				if x >= iconStartX && x < iconEndX {
 					m.toggleExpand()
+					m.calculateButtonZones()
 					return m, nil
 				}
 			}

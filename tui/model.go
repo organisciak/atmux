@@ -250,6 +250,94 @@ func (m *Model) findButtonAt(x, y int) (buttonZone, bool) {
 	return buttonZone{}, false
 }
 
+// calculateButtonZones pre-calculates clickable button zones based on current layout.
+// This must be called after layout changes or tree data changes to keep zones in sync.
+func (m *Model) calculateButtonZones() {
+	m.buttonZones = nil
+
+	if m.width == 0 || m.height == 0 || m.treeWidth == 0 {
+		return
+	}
+
+	// Help button in top-right
+	helpBtnWidth := 3 // "[?]" rendered width with padding
+	m.buttonZones = append(m.buttonZones, buttonZone{
+		x:      m.width - helpBtnWidth - 4,
+		y:      1,
+		width:  helpBtnWidth,
+		height: 1,
+		action: buttonActionHelp,
+	})
+
+	// Tree node buttons
+	treeHeight := m.height - inputHeight - statusHeight - 4
+	if treeHeight < 1 {
+		treeHeight = 1
+	}
+
+	buttonYOffset := inputHeight + 1
+	buttonGap := 1
+
+	// Button widths (text + padding(0,1) on each side)
+	sendWidth := 6  // " SEND "
+	escWidth := 5   // " ESC "
+	attWidth := 5   // " ATT "
+
+	for i, node := range m.flatNodes {
+		if i >= treeHeight {
+			break
+		}
+
+		nodeY := buttonYOffset + i
+
+		if node.Type == "pane" {
+			// Panes get SEND, ESC, and ATT buttons
+			buttonsWidth := sendWidth + buttonGap + escWidth + buttonGap + attWidth
+			buttonStartX := m.treeWidth - buttonsWidth
+
+			m.buttonZones = append(m.buttonZones, buttonZone{
+				x:      buttonStartX,
+				y:      nodeY,
+				width:  sendWidth,
+				height: 1,
+				target: node.Target,
+				action: buttonActionSend,
+			})
+
+			escStartX := buttonStartX + sendWidth + buttonGap
+			m.buttonZones = append(m.buttonZones, buttonZone{
+				x:      escStartX,
+				y:      nodeY,
+				width:  escWidth,
+				height: 1,
+				target: node.Target,
+				action: buttonActionEscape,
+			})
+
+			attStartX := escStartX + escWidth + buttonGap
+			m.buttonZones = append(m.buttonZones, buttonZone{
+				x:      attStartX,
+				y:      nodeY,
+				width:  attWidth,
+				height: 1,
+				target: node.Target,
+				action: buttonActionAttach,
+			})
+		} else {
+			// Sessions and windows get only ATT button
+			buttonStartX := m.treeWidth - attWidth
+			m.buttonZones = append(m.buttonZones, buttonZone{
+				x:      buttonStartX,
+				y:      nodeY,
+				width:  attWidth,
+				height: 1,
+				target: node.Target,
+				action: buttonActionAttach,
+			})
+		}
+	}
+}
+
 func nodeKey(nodeType, target string) string {
 	return nodeType + ":" + target
 }
