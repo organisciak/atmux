@@ -24,7 +24,7 @@ var (
 
 func init() {
 	rootCmd.AddCommand(sessionsCmd)
-	sessionsCmd.Flags().BoolVar(&sessionsInline, "inline", false, "Render without alt screen (non-fullscreen)")
+	sessionsCmd.Flags().BoolVar(&sessionsInline, "inline", true, "Render without alt screen (non-fullscreen)")
 	sessionsCmd.Flags().BoolVar(&sessionsNoPopup, "no-popup", false, "Disable popup mode (default: popup when inside tmux)")
 	sessionsCmd.Flags().BoolVarP(&sessionsNonInteractive, "non-interactive", "n", false, "Print sessions and exit (no TUI)")
 }
