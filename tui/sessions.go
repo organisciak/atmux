@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,8 +17,8 @@ type SessionsOptions struct {
 
 // SessionsResult contains the outcome of the sessions list interaction.
 type SessionsResult struct {
-	SessionName  string // Session selected for attach, empty if quit
-	WorkingDir   string // Working directory for revival (if from history)
+	SessionName   string // Session selected for attach, empty if quit
+	WorkingDir    string // Working directory for revival (if from history)
 	IsFromHistory bool   // True if reviving from history rather than attaching
 }
 
@@ -48,6 +49,7 @@ func RunSessionsList(opts SessionsOptions) (*SessionsResult, error) {
 type sessionsModel struct {
 	lines              []tmux.SessionLine
 	historyEntries     []history.Entry
+	memoryBySession    map[string]tmux.SessionMemory
 	width              int
 	height             int
 	selectedIndex      int
@@ -56,6 +58,7 @@ type sessionsModel struct {
 	isHistorySelection bool
 	lastError          error
 	historyError       error
+	memoryError        error
 }
 
 func newSessionsModel() sessionsModel {
@@ -67,6 +70,10 @@ func (m sessionsModel) Init() tea.Cmd {
 		func() tea.Msg {
 			lines, err := tmux.ListSessionsRaw()
 			return sessionsLoadedMsg{lines: lines, err: err}
+		},
+		func() tea.Msg {
+			memory, err := tmux.FetchSessionMemory()
+			return memoryLoadedMsg{memory: memory, err: err}
 		},
 		func() tea.Msg {
 			store, err := history.Open()
@@ -90,12 +97,21 @@ type historyLoadedMsg struct {
 	err     error
 }
 
+type memoryLoadedMsg struct {
+	memory map[string]tmux.SessionMemory
+	err    error
+}
+
 func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case sessionsLoadedMsg:
 		m.lines = msg.lines
 		m.lastError = msg.err
 		m.clampSelection()
+		return m, nil
+	case memoryLoadedMsg:
+		m.memoryBySession = msg.memory
+		m.memoryError = msg.err
 		return m, nil
 	case historyLoadedMsg:
 		m.historyEntries = m.filterHistory(msg.entries)
@@ -223,8 +239,15 @@ func (m sessionsModel) View() string {
 		sections = append(sections, sectionHeader.Render("Active"))
 		for i, line := range m.lines {
 			row := "  " + line.Line
+			memSummary := m.memorySummary(line.Name)
+			if memSummary != "" {
+				row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
+			}
 			if i == m.selectedIndex {
 				row = selectedStyle.Render("> " + line.Line)
+				if memSummary != "" {
+					row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
+				}
 			}
 			sections = append(sections, row)
 		}
@@ -262,5 +285,61 @@ func sessionsTimeAgo(t time.Time) string {
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	default:
 		return t.Format("Jan 2")
+	}
+}
+
+func (m sessionsModel) memorySummary(sessionName string) string {
+	if m.memoryBySession == nil {
+		return ""
+	}
+	mem, ok := m.memoryBySession[sessionName]
+	if !ok {
+		return ""
+	}
+	return formatSessionMemory(mem)
+}
+
+func formatSessionMemory(mem tmux.SessionMemory) string {
+	var windows []string
+	for _, win := range mem.Windows {
+		if len(win.Panes) == 0 {
+			continue
+		}
+		label := win.Name
+		if label == "" {
+			label = fmt.Sprintf("win%d", win.Index)
+		}
+		var panes []string
+		for _, pane := range win.Panes {
+			if pane.RSSBytes <= 0 {
+				continue
+			}
+			panes = append(panes, fmt.Sprintf("%d:%s", pane.Index, formatMemoryBytes(pane.RSSBytes)))
+		}
+		if len(panes) == 0 {
+			continue
+		}
+		windows = append(windows, fmt.Sprintf("%s[%s]", label, strings.Join(panes, " ")))
+	}
+	if len(windows) == 0 {
+		return ""
+	}
+	return strings.Join(windows, " ")
+}
+
+func formatMemoryBytes(b int64) string {
+	const kb = int64(1024)
+	const mb = 1024 * kb
+	const gb = 1024 * mb
+
+	switch {
+	case b >= gb:
+		return fmt.Sprintf("%.1fG", float64(b)/float64(gb))
+	case b >= mb:
+		return fmt.Sprintf("%dM", (b+mb/2)/mb)
+	case b >= kb:
+		return fmt.Sprintf("%dK", (b+kb/2)/kb)
+	default:
+		return fmt.Sprintf("%dB", b)
 	}
 }
