@@ -56,12 +56,19 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if result.SessionName != "" {
-		// Save to history before attaching
-		if sessionPath := tmux.GetSessionPath(result.SessionName); sessionPath != "" {
-			saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName)
-		}
-		return tmux.AttachToSession(result.SessionName)
+	if result.SessionName == "" {
+		return nil
 	}
-	return nil
+
+	if result.IsFromHistory {
+		// Revival from history - create new session in that directory
+		session := tmux.NewSession(result.WorkingDir)
+		return runDirectAttach(session, result.WorkingDir)
+	}
+
+	// Attach to existing session
+	if sessionPath := tmux.GetSessionPath(result.SessionName); sessionPath != "" {
+		saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName)
+	}
+	return tmux.AttachToSession(result.SessionName)
 }

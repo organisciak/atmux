@@ -66,13 +66,18 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if result.SessionName != "" {
-			if sessionPath := tmux.GetSessionPath(result.SessionName); sessionPath != "" {
-				saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName)
-			}
-			return tmux.AttachToSession(result.SessionName)
+		if result.SessionName == "" {
+			return nil
 		}
-		return nil
+		if result.IsFromHistory {
+			// Revival from history
+			histSession := tmux.NewSession(result.WorkingDir)
+			return runDirectAttach(histSession, result.WorkingDir)
+		}
+		if sessionPath := tmux.GetSessionPath(result.SessionName); sessionPath != "" {
+			saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName)
+		}
+		return tmux.AttachToSession(result.SessionName)
 	default: // "landing" or empty
 		return runLandingPage(session, workingDir)
 	}
