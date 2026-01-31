@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/porganisciak/agent-tmux/tmux"
 	"github.com/porganisciak/agent-tmux/tui"
@@ -49,7 +50,18 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		return launchAsPopup("sessions")
 	}
 
-	return tui.RunSessionsList(tui.SessionsOptions{
+	result, err := tui.RunSessionsList(tui.SessionsOptions{
 		AltScreen: !sessionsInline,
 	})
+	if err != nil {
+		return err
+	}
+	if result.SessionName != "" {
+		// Save to history before attaching
+		if sessionPath := tmux.GetSessionPath(result.SessionName); sessionPath != "" {
+			saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName)
+		}
+		return tmux.AttachToSession(result.SessionName)
+	}
+	return nil
 }

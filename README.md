@@ -1,6 +1,6 @@
-# agent-tmux
+# atmux (agent-tmux)
 
-A CLI tool for managing tmux sessions optimized for AI coding workflows.
+atmux (short for agent-tmux) is a CLI tool for managing tmux sessions optimized for AI coding workflows.
 
 ## Features
 
@@ -20,22 +20,27 @@ cd agent-tmux
 make install
 ```
 
+This installs the `atmux` command.
+
 ### Homebrew (coming soon)
 
 ```bash
 brew tap porganisciak/tap
-brew install agent-tmux
+brew install atmux
 ```
+
+Homebrew installs the `atmux` command.
+Alias: `brew install agent-tmux` (installs `atmux` plus an `agent-tmux` wrapper).
 
 ## Usage
 
 ### Start a session
 
-Run `agent-tmux` in any project directory to create or attach to a session:
+Run `atmux` in any project directory to create or attach to a session:
 
 ```bash
 cd ~/projects/my-app
-agent-tmux
+atmux
 ```
 
 This creates a session named `agent-my-app` with:
@@ -45,34 +50,34 @@ This creates a session named `agent-my-app` with:
 ### Commands
 
 ```bash
-agent-tmux                 # Start or attach to session for current directory
-agent-tmux list            # List all agent-tmux sessions
-agent-tmux sessions        # Interactive sessions list (click or select to attach)
-agent-tmux list-sessions   # Alias for sessions
-agent-tmux browse          # Interactive session browser with pane previews
-agent-tmux attach NAME     # Attach to a specific session
-agent-tmux kill NAME       # Kill a specific session
-agent-tmux kill --all      # Kill all agent-tmux sessions
-agent-tmux init            # Create a .agent-tmux.conf template
-agent-tmux version         # Show version info
+atmux                 # Start or attach to session for current directory
+atmux list            # List all atmux sessions
+atmux sessions        # Interactive sessions list (click or select to attach)
+atmux list-sessions   # Alias for sessions
+atmux browse          # Interactive session browser with pane previews
+atmux attach NAME     # Attach to a specific session
+atmux kill NAME       # Kill a specific session
+atmux kill --all      # Kill all atmux sessions
+atmux init            # Create a .agent-tmux.conf template
+atmux version         # Show version info
 ```
 
 #### Browse mode
 
 ```bash
-agent-tmux browse
+atmux browse
 ```
 
 - Tree view of sessions, windows, and panes
 - Live preview of selected pane output
 - Send commands (and Escape) to a pane
 - Mouse and keyboard navigation
-- Optional popup mode: `agent-tmux browse --popup`
+- Optional popup mode: `atmux browse --popup`
 
 #### Sessions TUI
 
 ```bash
-agent-tmux sessions
+atmux sessions
 ```
 
 - Click or select a session to attach
@@ -84,7 +89,7 @@ Create a `.agent-tmux.conf` file in your project root to customize the session:
 
 ```bash
 # Create a template
-agent-tmux init
+atmux init
 ```
 
 ### Config format
@@ -121,13 +126,13 @@ vagents:watch -n 1 'git status'
 
 ```bash
 # Bash
-agent-tmux completion bash > /etc/bash_completion.d/agent-tmux
+atmux completion bash > /etc/bash_completion.d/atmux
 
 # Zsh
-agent-tmux completion zsh > "${fpath[1]}/_agent-tmux"
+atmux completion zsh > "${fpath[1]}/_atmux"
 
 # Fish
-agent-tmux completion fish > ~/.config/fish/completions/agent-tmux.fish
+atmux completion fish > ~/.config/fish/completions/atmux.fish
 ```
 
 ## Development

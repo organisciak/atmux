@@ -17,14 +17,14 @@ type WindowConfig struct {
 }
 
 type Config struct {
-	Windows     []WindowConfig // New windows to create
-	AgentPanes  []PaneConfig   // Panes to add to agents window
+	Windows    []WindowConfig // New windows to create
+	AgentPanes []PaneConfig   // Panes to add to agents window
 }
 
 // DefaultConfigName is the name of the config file to look for
 const DefaultConfigName = ".agent-tmux.conf"
 
-// Parse reads and parses an agent-tmux config file
+// Parse reads and parses an atmux (agent-tmux) config file
 func Parse(path string) (*Config, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -111,7 +111,7 @@ func Exists(path string) bool {
 
 // DefaultTemplate returns a template for a new config file
 func DefaultTemplate() string {
-	return `# agent-tmux configuration
+	return `# atmux (agent-tmux) configuration
 # This file configures additional windows and panes for your tmux session
 
 # Directives:

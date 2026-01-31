@@ -129,7 +129,7 @@ func NewModel(opts Options) Model {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		fetchTree,
-		tea.SetWindowTitle("agent-tmux browse"),
+		tea.SetWindowTitle("atmux browse"),
 	)
 }
 
@@ -280,9 +280,9 @@ func (m *Model) calculateButtonZones() {
 	buttonGap := 1
 
 	// Button widths (text + padding(0,1) on each side)
-	sendWidth := 6  // " SEND "
-	escWidth := 5   // " ESC "
-	attWidth := 5   // " ATT "
+	sendWidth := 6 // " SEND "
+	escWidth := 5  // " ESC "
+	attWidth := 5  // " ATT "
 
 	for i, node := range m.flatNodes {
 		if i >= treeHeight {

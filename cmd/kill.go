@@ -12,8 +12,8 @@ var killAll bool
 
 var killCmd = &cobra.Command{
 	Use:   "kill [session-name]",
-	Short: "Kill an agent-tmux session",
-	Long: `Kill a specific agent-tmux session by name, or all sessions with --all.
+	Short: "Kill an atmux session",
+	Long: `Kill a specific atmux session by name, or all sessions with --all.
 
 If no session name is provided and you're in a project directory,
 it will kill the session for that project.`,
@@ -22,7 +22,7 @@ it will kill the session for that project.`,
 
 func init() {
 	rootCmd.AddCommand(killCmd)
-	killCmd.Flags().BoolVarP(&killAll, "all", "a", false, "Kill all agent-tmux sessions")
+	killCmd.Flags().BoolVarP(&killAll, "all", "a", false, "Kill all atmux sessions")
 }
 
 func runKill(cmd *cobra.Command, args []string) error {
@@ -34,14 +34,14 @@ func runKill(cmd *cobra.Command, args []string) error {
 		// Try to kill session for current directory
 		session := tmux.NewSession(".")
 		if !session.Exists() {
-			return fmt.Errorf("no session found for current directory\nUse 'agent-tmux list' to see active sessions")
+			return fmt.Errorf("no session found for current directory\nUse 'atmux list' to see active sessions")
 		}
 		return killSession(session.Name)
 	}
 
 	// Kill specified session
 	name := args[0]
-	if !strings.HasPrefix(name, "agent-") {
+	if !strings.HasPrefix(name, "agent-") && !strings.HasPrefix(name, "atmux-") {
 		name = "agent-" + name
 	}
 	return killSession(name)
@@ -62,7 +62,7 @@ func killAllSessions() error {
 	}
 
 	if len(sessions) == 0 {
-		fmt.Println("No active agent-tmux sessions to kill")
+		fmt.Println("No active atmux sessions to kill")
 		return nil
 	}
 

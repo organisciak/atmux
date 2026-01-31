@@ -12,8 +12,13 @@ type SessionsOptions struct {
 	AltScreen bool
 }
 
-// RunSessionsList runs a simple session list UI that attaches on click.
-func RunSessionsList(opts SessionsOptions) error {
+// SessionsResult contains the outcome of the sessions list interaction.
+type SessionsResult struct {
+	SessionName string // Session selected for attach, empty if quit
+}
+
+// RunSessionsList runs a simple session list UI and returns the selected session.
+func RunSessionsList(opts SessionsOptions) (*SessionsResult, error) {
 	m := newSessionsModel()
 	programOptions := []tea.ProgramOption{
 		tea.WithMouseCellMotion(),
@@ -24,12 +29,12 @@ func RunSessionsList(opts SessionsOptions) error {
 	p := tea.NewProgram(m, programOptions...)
 	finalModel, err := p.Run()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if model, ok := finalModel.(sessionsModel); ok && model.attachSession != "" {
-		return tmux.AttachToSession(model.attachSession)
+	if model, ok := finalModel.(sessionsModel); ok {
+		return &SessionsResult{SessionName: model.attachSession}, nil
 	}
-	return nil
+	return &SessionsResult{}, nil
 }
 
 type sessionsModel struct {

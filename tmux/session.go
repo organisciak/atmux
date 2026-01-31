@@ -34,20 +34,34 @@ func NewSession(workingDir string) *Session {
 	// Find the diag script (look relative to the executable)
 	execPath, _ := os.Executable()
 	execDir := filepath.Dir(execPath)
-	diagScript := filepath.Join(execDir, "agent-tmux-diag.sh")
+	diagScriptNames := []string{"atmux-diag.sh", "agent-tmux-diag.sh"}
+	diagScript := ""
 
-	// Fallback to looking in the working dir's parent bin folder
-	if _, err := os.Stat(diagScript); os.IsNotExist(err) {
+	for _, name := range diagScriptNames {
+		candidate := filepath.Join(execDir, name)
+		if _, err := os.Stat(candidate); err == nil {
+			diagScript = candidate
+			break
+		}
+	}
+
+	if diagScript == "" {
 		// Try common locations
 		homeDir, _ := os.UserHomeDir()
-		possiblePaths := []string{
-			filepath.Join(homeDir, "bin", "agent-tmux-diag.sh"),
-			"/usr/local/bin/agent-tmux-diag.sh",
-			"/opt/homebrew/bin/agent-tmux-diag.sh",
+		possibleDirs := []string{
+			filepath.Join(homeDir, "bin"),
+			"/usr/local/bin",
+			"/opt/homebrew/bin",
 		}
-		for _, p := range possiblePaths {
-			if _, err := os.Stat(p); err == nil {
-				diagScript = p
+		for _, dir := range possibleDirs {
+			for _, name := range diagScriptNames {
+				candidate := filepath.Join(dir, name)
+				if _, err := os.Stat(candidate); err == nil {
+					diagScript = candidate
+					break
+				}
+			}
+			if diagScript != "" {
 				break
 			}
 		}
@@ -174,7 +188,7 @@ func (s *Session) run(args ...string) error {
 	return cmd.Run()
 }
 
-// ListSessions returns all agent-tmux sessions
+// ListSessions returns all atmux (agent-tmux) sessions
 func ListSessions() ([]string, error) {
 	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
 	output, err := cmd.Output()
@@ -185,7 +199,7 @@ func ListSessions() ([]string, error) {
 
 	var sessions []string
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		if strings.HasPrefix(line, "agent-") {
+		if strings.HasPrefix(line, "agent-") || strings.HasPrefix(line, "atmux-") {
 			sessions = append(sessions, line)
 		}
 	}
@@ -224,4 +238,14 @@ func parseSessionLine(line string) SessionLine {
 func KillSession(name string) error {
 	cmd := exec.Command("tmux", "kill-session", "-t", name)
 	return cmd.Run()
+}
+
+// GetSessionPath returns the working directory of a tmux session.
+func GetSessionPath(name string) string {
+	cmd := exec.Command("tmux", "display-message", "-t", name, "-p", "#{session_path}")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
 }

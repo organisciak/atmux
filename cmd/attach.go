@@ -11,8 +11,8 @@ import (
 
 var attachCmd = &cobra.Command{
 	Use:   "attach [session-name]",
-	Short: "Attach to an existing agent-tmux session",
-	Long: `Attach to an existing agent-tmux session by name.
+	Short: "Attach to an existing atmux session",
+	Long: `Attach to an existing atmux session by name.
 
 If no session name is provided and you're in a project directory,
 it will attach to the session for that project (if it exists).`,
@@ -36,7 +36,7 @@ func runAttach(cmd *cobra.Command, args []string) error {
 		sessionName = session.Name
 	} else {
 		sessionName = args[0]
-		if !strings.HasPrefix(sessionName, "agent-") {
+		if !strings.HasPrefix(sessionName, "agent-") && !strings.HasPrefix(sessionName, "atmux-") {
 			sessionName = "agent-" + sessionName
 		}
 	}
@@ -44,7 +44,7 @@ func runAttach(cmd *cobra.Command, args []string) error {
 	// Create a temporary session object for attaching
 	session := &tmux.Session{Name: sessionName}
 	if !session.Exists() {
-		return fmt.Errorf("session %s does not exist\nUse 'agent-tmux list' to see active sessions", sessionName)
+		return fmt.Errorf("session %s does not exist\nUse 'atmux list' to see active sessions", sessionName)
 	}
 
 	return session.Attach()

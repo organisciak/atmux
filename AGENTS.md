@@ -5,13 +5,13 @@
 - `tmux/`: Session orchestration and tmux command execution (`session.go`).
 - `config/`: Parser and templates for `.agent-tmux.conf` (`parser.go`).
 - `main.go`: Entrypoint wiring the CLI.
-- `homebrew/`: Homebrew formula (`agent-tmux.rb`).
+- `homebrew/`: Homebrew formula (`atmux.rb`) and alias (`agent-tmux.rb`).
 - Top-level `Makefile`, `go.mod`, `go.sum` define build and dependencies.
 
 ## Build, Test, and Development Commands
-- `make build`: Build the `agent-tmux` binary with version metadata.
-- `make install`: Install to `/usr/local/bin/agent-tmux`.
-- `make install-home`: Install to `~/bin/agent-tmux` (or `~/bin/agent-tmux-cli` symlink if a dir exists).
+- `make build`: Build the `atmux` binary with version metadata.
+- `make install`: Install to `/usr/local/bin/atmux`.
+- `make install-home`: Install to `~/bin/atmux` (or `~/bin/atmux-cli` symlink if a dir exists).
 - `make release`: Cross-build binaries into `dist/`.
 - `make test`: Run Go tests (`go test ./...`).
 
@@ -33,13 +33,13 @@
 
 ## Configuration & Runtime Notes
 - Project-specific behavior is configured in `.agent-tmux.conf` in the project root.
-- The default config template is generated via `agent-tmux init`.
-- The diagnostics script is resolved from common install locations (e.g., `/usr/local/bin/agent-tmux-diag.sh`).
+- The default config template is generated via `atmux init`.
+- The diagnostics script is resolved from common install locations (e.g., `/usr/local/bin/atmux-diag.sh`, fallback `agent-tmux-diag.sh`).
 
 ## CLI Feature Notes
-- `agent-tmux sessions` is an interactive list with click-to-attach behavior.
-- `agent-tmux browse` opens a tree-based TUI with pane previews and command sending.
-- `agent-tmux browse --popup` uses a tmux popup overlay (tmux 3.2+).
+- `atmux sessions` is an interactive list with click-to-attach behavior.
+- `atmux browse` opens a tree-based TUI with pane previews and command sending.
+- `atmux browse --popup` uses a tmux popup overlay (tmux 3.2+).
 
 <!-- bv-agent-instructions-v1 -->
 

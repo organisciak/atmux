@@ -259,7 +259,7 @@ func (m Model) renderStatusBar() string {
 // renderHelpOverlay renders the help overlay on top of the base view
 func (m Model) renderHelpOverlay(base string) string {
 	// Build help content
-	title := helpTitleStyle.Render("agent-tmux browse - Help")
+	title := helpTitleStyle.Render("atmux browse - Help")
 
 	keyboardSection := helpSectionStyle.Render("Keyboard Shortcuts")
 	keyboard := []struct{ key, desc string }{

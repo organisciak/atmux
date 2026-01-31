@@ -17,7 +17,7 @@ var initCmd = &cobra.Command{
 	Long: `Creates a new .agent-tmux.conf configuration file in the current directory.
 
 The config file allows you to define project-specific tmux windows and panes
-that will be created when you start an agent-tmux session.`,
+that will be created when you start an atmux session.`,
 	RunE: runInit,
 }
 

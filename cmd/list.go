@@ -10,7 +10,7 @@ import (
 var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
-	Short:   "List active agent-tmux sessions",
+	Short:   "List active atmux sessions",
 	RunE:    runList,
 }
 
@@ -25,7 +25,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(sessions) == 0 {
-		fmt.Println("No active agent-tmux sessions")
+		fmt.Println("No active atmux sessions")
 		return nil
 	}
 
