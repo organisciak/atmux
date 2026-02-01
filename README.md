@@ -1,36 +1,77 @@
 # atmux (agent-tmux)
 
-atmux (short for agent-tmux) is a CLI tool for managing tmux sessions optimized for AI coding workflows.
+atmux (short for agent-tmux) gives you per-project tmux sessions tuned for AI coding. Run it in a repo, get a session with agent panes, and hop back in later.
+
+## Quick try (you don't have to read the rest)
+
+Just give it a spin:
+
+```bash
+brew install --build-from-source ./homebrew/atmux.rb
+# or, if you use the tap:
+# brew tap organisciak/tap
+# brew install atmux
+
+cd ~/projects/my-app
+atmux
+# Detach from tmux: Ctrl-b d
+
+cd ~/projects/another-app
+atmux
+# Detach again: Ctrl-b d
+
+atmux sessions
+```
+
+To shut things down:
+
+```bash
+atmux kill --all
+```
+
+If it's not for you:
+
+```bash
+brew uninstall atmux agent-tmux
+# Optional: brew untap organisciak/tap
+```
 
 ## Features
 
-- Creates tmux sessions with dedicated panes for AI coding agents (codex, claude)
-- Project-specific configuration via `.agent-tmux.conf`
+- One command to create or attach to a project session
+- Dedicated agent panes (codex, claude) plus a diagnostics window
+- Project-specific setup via `.agent-tmux.conf`
 - Interactive session browser with pane previews and command sending
 - Interactive sessions list with click-to-attach
 - Shell completions for bash, zsh, fish, and PowerShell
 
 ## Installation
 
-### From source
+### Homebrew
 
 ```bash
-git clone https://github.com/porganisciak/agent-tmux.git
-cd agent-tmux
-make install
+brew install --build-from-source ./homebrew/atmux.rb
 ```
 
-This installs the `atmux` command.
-
-### Homebrew (coming soon)
+Or, if you use the tap:
 
 ```bash
-brew tap porganisciak/tap
+brew tap organisciak/tap
 brew install atmux
 ```
 
 Homebrew installs the `atmux` command.
 Alias: `brew install agent-tmux` (installs `atmux` plus an `agent-tmux` wrapper).
+
+### From source
+
+```bash
+git clone https://github.com/organisciak/atmux.git
+cd atmux
+make install
+```
+
+This installs the `atmux` command.
 
 ## Usage
 
