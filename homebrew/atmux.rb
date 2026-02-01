@@ -3,11 +3,11 @@
 
 class Atmux < Formula
   desc "atmux (agent-tmux): manage tmux sessions for AI coding agents"
-  homepage "https://github.com/porganisciak/agent-tmux"
-  url "https://github.com/porganisciak/agent-tmux/archive/refs/tags/v0.1.0.tar.gz"
+  homepage "https://github.com/organisciak/atmux"
+  url "https://github.com/organisciak/atmux/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "REPLACE_WITH_ACTUAL_SHA256"
   license "MIT"
-  head "https://github.com/porganisciak/agent-tmux.git", branch: "main"
+  head "https://github.com/organisciak/atmux.git", branch: "main"
 
   depends_on "go" => :build
   depends_on "tmux"
