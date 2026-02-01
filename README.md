@@ -12,14 +12,17 @@ brew install --build-from-source ./homebrew/atmux.rb
 # brew tap organisciak/tap
 # brew install atmux
 
+# go to a project you're working on
 cd ~/projects/my-app
+
+# Start a new session
+# optionally run onboarding to choose your default agents
 atmux
 # Detach from tmux: Ctrl-b d
 
-cd ~/projects/another-app
-atmux
-# Detach again: Ctrl-b d
+# optional: run `atmux init` to create an editable ./agent-tmux.conf
 
+# see all of your projects, whether active, attached, or inactive but previously run
 atmux sessions
 ```
 
