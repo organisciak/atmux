@@ -4,21 +4,40 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/porganisciak/agent-tmux/tui"
 	"github.com/spf13/cobra"
 )
 
+var onboardQuick bool
+
 var onboardCmd = &cobra.Command{
 	Use:   "onboard",
-	Short: "First-time user guide for atmux",
-	Long:  "Interactive guide to help new users understand atmux features and setup.",
+	Short: "Interactive setup wizard for atmux",
+	Long:  "Interactive wizard to configure your AI coding agents and create global config.",
 	RunE:  runOnboard,
 }
 
 func init() {
 	rootCmd.AddCommand(onboardCmd)
+	onboardCmd.Flags().BoolVar(&onboardQuick, "quick", false, "Show quick reference guide instead of wizard")
 }
 
 func runOnboard(cmd *cobra.Command, args []string) error {
+	if !onboardQuick {
+		// Run interactive wizard
+		result, err := tui.RunOnboard()
+		if err != nil {
+			return err
+		}
+		if result.Completed {
+			fmt.Println("\nConfiguration saved! Run 'atmux' to start a session.")
+		} else {
+			fmt.Println("\nSetup skipped. Run 'atmux onboard' to configure later.")
+		}
+		return nil
+	}
+
+	// Show quick reference (--quick flag)
 	// Styles
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -50,22 +69,22 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 
 	// Session Structure
 	fmt.Fprintln(out, sectionStyle.Render("Session Structure"))
-	fmt.Fprintln(out, "  Each session is created with:")
-	fmt.Fprintln(out, "  • "+codeStyle.Render("agents")+" window — split panes for AI coding tools")
-	fmt.Fprintln(out, "  • "+codeStyle.Render("diag")+" window — diagnostics and monitoring")
+	fmt.Fprintln(out, "  Each session is created with an "+codeStyle.Render("agents")+" window")
+	fmt.Fprintln(out, "  containing your configured AI coding tools (claude, codex, etc.)")
 	fmt.Fprintln(out)
 
-	// Project Config
-	fmt.Fprintln(out, sectionStyle.Render("Project Configuration"))
-	fmt.Fprintln(out, "  Create "+codeStyle.Render(".agent-tmux.conf")+" in your project root to customize:")
+	// Configuration
+	fmt.Fprintln(out, sectionStyle.Render("Configuration"))
+	fmt.Fprintln(out, "  Global: "+codeStyle.Render("~/.config/atmux/config"))
+	fmt.Fprintln(out, "  Project: "+codeStyle.Render(".agent-tmux.conf")+" (overrides global)")
 	fmt.Fprintln(out, dimStyle.Render(`
-    # Example .agent-tmux.conf
-    window dev
-      pane npm run dev
-      pane npm run test -- --watch
+    # Example config
+    agent:claude --dangerously-skip-permissions
+    agent:codex --full-auto
 
-    window logs
-      pane tail -f app.log
+    window:dev
+    pane:npm run dev
+    pane:npm run test -- --watch
 `))
 
 	// Commands

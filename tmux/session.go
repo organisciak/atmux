@@ -15,7 +15,6 @@ import (
 type Session struct {
 	Name       string
 	WorkingDir string
-	DiagScript string
 }
 
 // SessionLine mirrors a single line from `tmux list-sessions`.
@@ -31,46 +30,9 @@ func NewSession(workingDir string) *Session {
 	reg := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 	slug := reg.ReplaceAllString(basename, "_")
 
-	// Find the diag script (look relative to the executable)
-	execPath, _ := os.Executable()
-	execDir := filepath.Dir(execPath)
-	diagScriptNames := []string{"atmux-diag.sh", "agent-tmux-diag.sh"}
-	diagScript := ""
-
-	for _, name := range diagScriptNames {
-		candidate := filepath.Join(execDir, name)
-		if _, err := os.Stat(candidate); err == nil {
-			diagScript = candidate
-			break
-		}
-	}
-
-	if diagScript == "" {
-		// Try common locations
-		homeDir, _ := os.UserHomeDir()
-		possibleDirs := []string{
-			filepath.Join(homeDir, "bin"),
-			"/usr/local/bin",
-			"/opt/homebrew/bin",
-		}
-		for _, dir := range possibleDirs {
-			for _, name := range diagScriptNames {
-				candidate := filepath.Join(dir, name)
-				if _, err := os.Stat(candidate); err == nil {
-					diagScript = candidate
-					break
-				}
-			}
-			if diagScript != "" {
-				break
-			}
-		}
-	}
-
 	return &Session{
 		Name:       "agent-" + slug,
 		WorkingDir: workingDir,
-		DiagScript: diagScript,
 	}
 }
 
@@ -80,33 +42,41 @@ func (s *Session) Exists() bool {
 	return cmd.Run() == nil
 }
 
-// Create creates a new tmux session with the default layout
-func (s *Session) Create() error {
+// DefaultAgents returns the default agent commands when no config is provided
+func DefaultAgents() []config.AgentConfig {
+	return []config.AgentConfig{
+		{Command: "claude --dangerously-skip-permissions"},
+		{Command: "codex --full-auto"},
+	}
+}
+
+// Create creates a new tmux session with the agents window
+func (s *Session) Create(cfg *config.Config) error {
+	// Determine which agents to use
+	agents := DefaultAgents()
+	if cfg != nil && len(cfg.CoreAgents) > 0 {
+		agents = cfg.CoreAgents
+	}
+
 	// Create session with agents window
 	if err := s.run("new-session", "-d", "-s", s.Name, "-n", "agents", "-c", s.WorkingDir); err != nil {
 		return fmt.Errorf("failed to create session: %w", err)
 	}
 
-	// Split horizontally for claude pane
-	if err := s.run("split-window", "-h", "-t", s.Name+":agents", "-c", s.WorkingDir); err != nil {
-		return fmt.Errorf("failed to split window: %w", err)
+	// Set up agent panes
+	for i, agent := range agents {
+		if i == 0 {
+			// First agent uses the initial pane
+			s.run("send-keys", "-t", s.Name+":agents.0", agent.Command, "C-m")
+		} else {
+			// Subsequent agents split horizontally
+			s.run("split-window", "-h", "-t", s.Name+":agents", "-c", s.WorkingDir)
+			s.run("send-keys", "-t", s.Name+":agents", agent.Command, "C-m")
+		}
 	}
 
-	// Set up codex pane (pane 0)
+	// Select first pane
 	s.run("select-pane", "-t", s.Name+":agents.0")
-	s.run("select-pane", "-T", "codex")
-	s.run("send-keys", "-t", s.Name+":agents.0", "codex --yolo", "C-m")
-
-	// Set up claude pane (pane 1)
-	s.run("select-pane", "-t", s.Name+":agents.1")
-	s.run("select-pane", "-T", "claude")
-	s.run("send-keys", "-t", s.Name+":agents.1", "claude code --yolo", "C-m")
-
-	// Create diag window
-	s.run("new-window", "-t", s.Name, "-n", "diag", "-c", s.WorkingDir)
-	if s.DiagScript != "" {
-		s.run("send-keys", "-t", s.Name+":diag", s.DiagScript, "C-m")
-	}
 
 	return nil
 }

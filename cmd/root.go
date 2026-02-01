@@ -19,10 +19,9 @@ var rootCmd = &cobra.Command{
 	Short: "Manage tmux sessions for AI coding agents",
 	Long: `atmux (short for agent-tmux) creates and manages tmux sessions optimized for AI coding workflows.
 
-It creates a session with:
-  - An 'agents' window with codex and claude panes
-  - A 'diag' window for diagnostics
-  - Project-specific windows/panes from .agent-tmux.conf`,
+It creates a session with an 'agents' window configured via:
+  - Global config: ~/.config/atmux/config
+  - Project config: .agent-tmux.conf (overrides global)`,
 	RunE: runRoot,
 }
 
@@ -92,22 +91,24 @@ func runDirectAttach(session *tmux.Session, workingDir string) error {
 		return session.Attach()
 	}
 
-	// Create new session
+	// Load merged config (global + local)
+	localConfigPath := filepath.Join(workingDir, config.DefaultConfigName)
+	cfg, err := config.LoadConfig(localConfigPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load config: %v\n", err)
+		cfg = nil
+	}
+
+	// Create new session with agent config
 	fmt.Printf("Creating new session: %s\n", session.Name)
-	if err := session.Create(); err != nil {
+	if err := session.Create(cfg); err != nil {
 		return err
 	}
 
-	// Check for project-specific config
-	configPath := filepath.Join(workingDir, config.DefaultConfigName)
-	if config.Exists(configPath) {
-		cfg, err := config.Parse(configPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to parse config: %v\n", err)
-		} else {
-			if err := session.ApplyConfig(cfg); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to apply config: %v\n", err)
-			}
+	// Apply additional windows/panes from config
+	if cfg != nil {
+		if err := session.ApplyConfig(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to apply config: %v\n", err)
 		}
 	}
 
