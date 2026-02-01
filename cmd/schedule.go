@@ -117,7 +117,7 @@ func runScheduleTUI(cmd *cobra.Command, args []string) error {
 func runScheduleAdd(cmd *cobra.Command, args []string) error {
 	// If no flags provided, run interactive mode
 	if scheduleCron == "" && scheduleTarget == "" && scheduleCommand == "" {
-		result, err := tui.RunScheduleAddTUI()
+		result, err := tui.RunScheduleFormTUI()
 		if err != nil {
 			return err
 		}

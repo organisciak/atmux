@@ -111,6 +111,9 @@ func (m scheduleAddModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
+
+	case tea.MouseMsg:
+		return m.handleMouseMsg(msg)
 	}
 	return m, nil
 }
@@ -175,6 +178,14 @@ func (m scheduleAddModel) handlePresetKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m scheduleAddModel) handleCustomCronKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	// Prioritize cron character input FIRST
+	if len(key) == 1 && (key[0] >= '0' && key[0] <= '9' ||
+		key[0] == '*' || key[0] == '/' || key[0] == '-' || key[0] == ',') {
+		m.cronFields[m.cronFieldFocus] += key
+		return m, nil
+	}
+
+	// Only handle special keys if not a valid cron character
 	switch key {
 	case "esc":
 		m.step = stepPreset
@@ -211,15 +222,9 @@ func (m scheduleAddModel) handleCustomCronKey(msg tea.KeyMsg) (tea.Model, tea.Cm
 			m.cronFields[m.cronFieldFocus] = m.cronFields[m.cronFieldFocus][:len(m.cronFields[m.cronFieldFocus])-1]
 		}
 		return m, nil
-
-	default:
-		// Accept digits, *, /, -, and ,
-		if len(key) == 1 && (key[0] >= '0' && key[0] <= '9' ||
-			key[0] == '*' || key[0] == '/' || key[0] == '-' || key[0] == ',') {
-			m.cronFields[m.cronFieldFocus] += key
-		}
-		return m, nil
 	}
+
+	return m, nil
 }
 
 func (m scheduleAddModel) handleTargetKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -281,6 +286,16 @@ func (m scheduleAddModel) handleTargetKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m scheduleAddModel) handleCommandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	// Prioritize text input - capture printable characters FIRST
+	if len(key) == 1 && key[0] >= 32 && key[0] < 127 {
+		m.commandInput += key
+		return m, nil
+	} else if key == "space" {
+		m.commandInput += " "
+		return m, nil
+	}
+
+	// Only handle special keys if not a printable character
 	switch key {
 	case "esc", "backspace":
 		if m.commandInput == "" {
@@ -306,16 +321,9 @@ func (m scheduleAddModel) handleCommandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 			return m, nil
 		}
 		return m, nil
-
-	default:
-		// Accept printable characters
-		if len(key) == 1 && key[0] >= 32 && key[0] < 127 {
-			m.commandInput += key
-		} else if key == "space" {
-			m.commandInput += " "
-		}
-		return m, nil
 	}
+
+	return m, nil
 }
 
 func (m scheduleAddModel) handlePreActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -384,6 +392,120 @@ func (m scheduleAddModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+func (m scheduleAddModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+
+	switch m.step {
+	case stepPreset:
+		return m.handlePresetMouse(msg)
+	case stepTarget:
+		return m.handleTargetMouse(msg)
+	case stepPreAction:
+		return m.handlePreActionMouse(msg)
+	case stepConfirm:
+		return m.handleConfirmMouse(msg)
+	}
+	return m, nil
+}
+
+func (m scheduleAddModel) handlePresetMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Calculate click region for preset options
+	// Title takes ~5 lines, each preset option is 1 line
+	startY := m.height/2 - 10 // Approximate start of options
+	clickedIdx := msg.Y - startY - 3
+
+	if clickedIdx >= 0 && clickedIdx < len(m.presets) {
+		m.cursor = clickedIdx
+		// Double-click to select
+		m.selectedCron = m.presets[m.cursor].Expression
+		m.useCustomCron = false
+		m.step = stepTarget
+		m.cursor = 0
+		return m, m.loadTree()
+	} else if clickedIdx == len(m.presets)+1 {
+		// Clicked "Custom schedule..."
+		m.useCustomCron = true
+		m.step = stepCustom
+		m.cursor = 0
+		m.cronFieldFocus = 0
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m scheduleAddModel) handleTargetMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Calculate click region for tree nodes
+	startY := m.height/2 - 10
+	clickedIdx := msg.Y - startY - 3
+
+	if clickedIdx >= 0 && clickedIdx < len(m.treeNodes) {
+		node := m.treeNodes[clickedIdx]
+		m.cursor = clickedIdx
+
+		// If session or window, toggle expand
+		if node.Type == "session" || node.Type == "window" {
+			node.Expanded = !node.Expanded
+			if m.tree != nil {
+				m.treeNodes = buildTreeNodesWithState(m.tree, m.treeNodes)
+			}
+		} else if node.Type == "pane" {
+			// Select pane
+			m.selectedTarget = node.Target
+			m.step = stepCommand
+			m.cursor = 0
+		}
+	}
+
+	return m, nil
+}
+
+func (m scheduleAddModel) handlePreActionMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Calculate click region for pre-action options
+	startY := m.height/2 - 5
+	clickedIdx := msg.Y - startY - 3
+
+	if clickedIdx >= 0 && clickedIdx <= 2 {
+		m.cursor = clickedIdx
+		// Select and continue
+		switch m.cursor {
+		case 0:
+			m.preAction = scheduler.PreActionNone
+		case 1:
+			m.preAction = scheduler.PreActionCompact
+		case 2:
+			m.preAction = scheduler.PreActionNew
+		}
+		m.step = stepConfirm
+		m.cursor = 0
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m scheduleAddModel) handleConfirmMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Calculate button regions
+	// Buttons are at the bottom of the centered box
+	buttonY := m.height/2 + 8 // Approximate Y position of buttons
+
+	if msg.Y == buttonY {
+		// Check X position for Save vs Cancel
+		centerX := m.width / 2
+		if msg.X >= centerX-15 && msg.X < centerX {
+			// Clicked Save
+			return m.saveSchedule()
+		} else if msg.X >= centerX+3 && msg.X < centerX+20 {
+			// Clicked Cancel
+			return m, tea.Quit
+		}
+	}
+
+	return m, nil
+}
+
 func (m scheduleAddModel) loadTree() tea.Cmd {
 	return func() tea.Msg {
 		tree, err := tmux.FetchTree()
@@ -443,22 +565,14 @@ func (m scheduleAddModel) View() string {
 }
 
 func (m scheduleAddModel) viewPreset() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
-	subtitleStyle := lipgloss.NewStyle().Foreground(dimColor)
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Padding(1, 2)
-
 	var lines []string
-	lines = append(lines, titleStyle.Render("Add Scheduled Command")+"                    "+subtitleStyle.Render("Step 1 of 5"))
+	lines = append(lines, schedTitleStyle.Render("Add Scheduled Command")+"                    "+wizSubtitleStyle.Render("Step 1 of 5"))
 	lines = append(lines, "")
 	lines = append(lines, "How often should this run?")
 	lines = append(lines, "")
 
 	for i, preset := range m.presets {
-		cronStyle := lipgloss.NewStyle().Foreground(dimColor)
-		line := fmt.Sprintf("%s  %s", preset.Label, cronStyle.Render("("+preset.Expression+")"))
+		line := fmt.Sprintf("%s  %s", preset.Label, wizSubtitleStyle.Render("("+preset.Expression+")"))
 		if i == m.cursor {
 			line = selectedStyle.Render("> " + line)
 		} else {
@@ -467,7 +581,7 @@ func (m scheduleAddModel) viewPreset() string {
 		lines = append(lines, line)
 	}
 
-	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("  ─────────────────────────────────"))
+	lines = append(lines, wizSeparatorStyle.Render("  ─────────────────────────────────"))
 
 	customLine := "Custom schedule..."
 	if m.cursor == len(m.presets) {
@@ -478,9 +592,9 @@ func (m scheduleAddModel) viewPreset() string {
 	lines = append(lines, customLine)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	box := boxStyle.Render(content)
+	box := wizBoxStyle.Render(content)
 
-	hints := lipgloss.NewStyle().Foreground(dimColor).Render("↑↓ select │ Enter continue │ Esc back │ q quit")
+	hints := schedHintStyle.Render("↑↓ select │ Enter continue │ Esc back │ q quit")
 
 	return lipgloss.Place(m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
@@ -488,15 +602,8 @@ func (m scheduleAddModel) viewPreset() string {
 }
 
 func (m scheduleAddModel) viewCustomCron() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
-	subtitleStyle := lipgloss.NewStyle().Foreground(dimColor)
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Padding(1, 2)
-
 	var lines []string
-	lines = append(lines, titleStyle.Render("Custom Schedule")+"                         "+subtitleStyle.Render("Step 1 of 5"))
+	lines = append(lines, schedTitleStyle.Render("Custom Schedule")+"                         "+wizSubtitleStyle.Render("Step 1 of 5"))
 	lines = append(lines, "")
 
 	// Field headers
@@ -506,16 +613,20 @@ func (m scheduleAddModel) viewCustomCron() string {
 	headerLine := "  "
 	rangeLine := "  "
 	for i, name := range fieldNames {
-		style := lipgloss.NewStyle().Width(10).Align(lipgloss.Center)
+		var style lipgloss.Style
 		if i == m.cronFieldFocus {
-			style = style.Bold(true).Foreground(primaryColor)
+			style = wizCronHeaderFocusStyle
+		} else {
+			style = wizCronHeaderStyle
 		}
 		headerLine += style.Render(name)
 	}
 	for i, r := range fieldRanges {
-		style := lipgloss.NewStyle().Width(10).Align(lipgloss.Center).Foreground(dimColor)
+		var style lipgloss.Style
 		if i == m.cronFieldFocus {
-			style = style.Foreground(primaryColor)
+			style = wizCronRangeFocusStyle
+		} else {
+			style = wizCronRangeStyle
 		}
 		rangeLine += style.Render(r)
 	}
@@ -526,9 +637,11 @@ func (m scheduleAddModel) viewCustomCron() string {
 	// Field values
 	valueLine := "  "
 	for i, val := range m.cronFields {
-		style := lipgloss.NewStyle().Width(10).Align(lipgloss.Center)
+		var style lipgloss.Style
 		if i == m.cronFieldFocus {
-			style = style.Bold(true).Background(lipgloss.Color("236")).Foreground(lipgloss.Color("255"))
+			style = wizCronFieldFocusStyle
+		} else {
+			style = wizCronFieldStyle
 		}
 		if val == "" {
 			val = "_"
@@ -544,28 +657,27 @@ func (m scheduleAddModel) viewCustomCron() string {
 		m.cronFields[3], m.cronFields[4])
 	preview := scheduler.CronToEnglish(expr)
 	_, err := scheduler.ParseSchedule(expr)
-	previewStyle := lipgloss.NewStyle()
+	var previewStyle lipgloss.Style
 	if err != nil {
-		previewStyle = previewStyle.Foreground(errorColor)
+		previewStyle = wizPreviewErrStyle
 		preview = "Invalid expression"
 	} else {
-		previewStyle = previewStyle.Foreground(activeColor)
+		previewStyle = wizPreviewOKStyle
 	}
 
 	lines = append(lines, "Preview: "+previewStyle.Render(preview))
-	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("Cron:    "+expr))
+	lines = append(lines, wizSubtitleStyle.Render("Cron:    "+expr))
 	lines = append(lines, "")
 
 	// Quick reference
-	refStyle := lipgloss.NewStyle().Foreground(dimColor)
-	lines = append(lines, refStyle.Render("Quick Reference:"))
-	lines = append(lines, refStyle.Render("  *     = every    */15  = every 15    0,30 = 0 and 30"))
-	lines = append(lines, refStyle.Render("  1-5   = 1 thru 5                      Mon-Fri = weekdays"))
+	lines = append(lines, wizRefStyle.Render("Quick Reference:"))
+	lines = append(lines, wizRefStyle.Render("  *     = every    */15  = every 15    0,30 = 0 and 30"))
+	lines = append(lines, wizRefStyle.Render("  1-5   = 1 thru 5                      Mon-Fri = weekdays"))
 
 	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	box := boxStyle.Render(content)
+	box := wizBoxStyle.Render(content)
 
-	hints := lipgloss.NewStyle().Foreground(dimColor).Render("Tab next field │ Enter continue │ Esc back")
+	hints := schedHintStyle.Render("Tab next field │ Enter continue │ Esc back")
 
 	return lipgloss.Place(m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
@@ -573,26 +685,19 @@ func (m scheduleAddModel) viewCustomCron() string {
 }
 
 func (m scheduleAddModel) viewTarget() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
-	subtitleStyle := lipgloss.NewStyle().Foreground(dimColor)
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Padding(1, 2)
-
 	var lines []string
-	lines = append(lines, titleStyle.Render("Select Target Pane")+"                    "+subtitleStyle.Render("Step 2 of 5"))
+	lines = append(lines, schedTitleStyle.Render("Select Target Pane")+"                    "+wizSubtitleStyle.Render("Step 2 of 5"))
 	lines = append(lines, "")
 	lines = append(lines, "Which pane should receive the command?")
 	lines = append(lines, "")
 
 	if m.tree == nil || len(m.treeNodes) == 0 {
-		lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("Loading tmux sessions..."))
+		lines = append(lines, wizSubtitleStyle.Render("Loading tmux sessions..."))
 	} else {
 		for i, node := range m.treeNodes {
 			indent := strings.Repeat("  ", node.Level)
 			icon := ""
-			style := lipgloss.NewStyle()
+			var style lipgloss.Style
 
 			switch node.Type {
 			case "session":
@@ -626,13 +731,13 @@ func (m scheduleAddModel) viewTarget() string {
 
 	if m.selectedTarget != "" {
 		lines = append(lines, "")
-		lines = append(lines, lipgloss.NewStyle().Foreground(activeColor).Render("Selected: "+m.selectedTarget))
+		lines = append(lines, wizPreviewOKStyle.Render("Selected: "+m.selectedTarget))
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	box := boxStyle.Render(content)
+	box := wizBoxStyle.Render(content)
 
-	hints := lipgloss.NewStyle().Foreground(dimColor).Render("↑↓ navigate │ Space expand │ Enter select │ Esc back")
+	hints := schedHintStyle.Render("↑↓ navigate │ Space expand │ Enter select │ Esc back")
 
 	return lipgloss.Place(m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
@@ -640,43 +745,30 @@ func (m scheduleAddModel) viewTarget() string {
 }
 
 func (m scheduleAddModel) viewCommand() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
-	subtitleStyle := lipgloss.NewStyle().Foreground(dimColor)
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Padding(1, 2)
-
 	var lines []string
-	lines = append(lines, titleStyle.Render("Command to Send")+"                       "+subtitleStyle.Render("Step 3 of 5"))
+	lines = append(lines, schedTitleStyle.Render("Command to Send")+"                       "+wizSubtitleStyle.Render("Step 3 of 5"))
 	lines = append(lines, "")
 	lines = append(lines, "What command should be sent to the pane?")
 	lines = append(lines, "")
 
 	// Input field
-	inputStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Padding(0, 1).
-		Width(40)
-
 	inputContent := m.commandInput
 	if inputContent == "" {
-		inputContent = lipgloss.NewStyle().Foreground(dimColor).Render("Type a command...")
+		inputContent = wizSubtitleStyle.Render("Type a command...")
 	}
-	lines = append(lines, inputStyle.Render(inputContent+"_"))
+	lines = append(lines, wizInputStyle.Render(inputContent+"_"))
 	lines = append(lines, "")
 
 	// Common commands
-	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("Common commands:"))
-	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("  /status   - Check agent status"))
-	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("  /compact  - Compact context"))
-	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("  /new      - Start fresh session"))
+	lines = append(lines, wizRefStyle.Render("Common commands:"))
+	lines = append(lines, wizRefStyle.Render("  /status   - Check agent status"))
+	lines = append(lines, wizRefStyle.Render("  /compact  - Compact context"))
+	lines = append(lines, wizRefStyle.Render("  /new      - Start fresh session"))
 
 	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	box := boxStyle.Render(content)
+	box := wizBoxStyle.Render(content)
 
-	hints := lipgloss.NewStyle().Foreground(dimColor).Render("Enter continue │ Esc back")
+	hints := schedHintStyle.Render("Enter continue │ Esc back")
 
 	return lipgloss.Place(m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
@@ -684,15 +776,8 @@ func (m scheduleAddModel) viewCommand() string {
 }
 
 func (m scheduleAddModel) viewPreAction() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
-	subtitleStyle := lipgloss.NewStyle().Foreground(dimColor)
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Padding(1, 2)
-
 	var lines []string
-	lines = append(lines, titleStyle.Render("Before Running Command")+"                "+subtitleStyle.Render("Step 4 of 5"))
+	lines = append(lines, schedTitleStyle.Render("Before Running Command")+"                "+wizSubtitleStyle.Render("Step 4 of 5"))
 	lines = append(lines, "")
 	lines = append(lines, "Should anything happen before your command?")
 	lines = append(lines, "")
@@ -717,13 +802,13 @@ func (m scheduleAddModel) viewPreAction() string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("Tip: \"Compact first\" is useful for daily status checks"))
-	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("     to ensure the agent has fresh context."))
+	lines = append(lines, wizRefStyle.Render("Tip: \"Compact first\" is useful for daily status checks"))
+	lines = append(lines, wizRefStyle.Render("     to ensure the agent has fresh context."))
 
 	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	box := boxStyle.Render(content)
+	box := wizBoxStyle.Render(content)
 
-	hints := lipgloss.NewStyle().Foreground(dimColor).Render("↑↓ select │ Enter continue │ Esc back")
+	hints := schedHintStyle.Render("↑↓ select │ Enter continue │ Esc back")
 
 	return lipgloss.Place(m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
@@ -731,27 +816,17 @@ func (m scheduleAddModel) viewPreAction() string {
 }
 
 func (m scheduleAddModel) viewConfirm() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
-	subtitleStyle := lipgloss.NewStyle().Foreground(dimColor)
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primaryColor).
-		Padding(1, 2)
-
 	var lines []string
-	lines = append(lines, titleStyle.Render("Review & Save")+"                           "+subtitleStyle.Render("Step 5 of 5"))
+	lines = append(lines, schedTitleStyle.Render("Review & Save")+"                           "+wizSubtitleStyle.Render("Step 5 of 5"))
 	lines = append(lines, "")
 
-	labelStyle := lipgloss.NewStyle().Foreground(dimColor)
-	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
-
 	// Schedule
-	lines = append(lines, labelStyle.Render("Schedule:")+"    "+valueStyle.Render(scheduler.CronToEnglish(m.selectedCron)))
-	lines = append(lines, labelStyle.Render("             ")+lipgloss.NewStyle().Foreground(dimColor).Render("("+m.selectedCron+")"))
+	lines = append(lines, wizLabelStyle.Render("Schedule:")+"    "+wizValueStyle.Render(scheduler.CronToEnglish(m.selectedCron)))
+	lines = append(lines, wizLabelStyle.Render("             ")+wizSubtitleStyle.Render("("+m.selectedCron+")"))
 	lines = append(lines, "")
 
 	// Target
-	lines = append(lines, labelStyle.Render("Target:")+"      "+valueStyle.Render(m.selectedTarget))
+	lines = append(lines, wizLabelStyle.Render("Target:")+"      "+wizValueStyle.Render(m.selectedTarget))
 	lines = append(lines, "")
 
 	// Pre-action
@@ -762,36 +837,28 @@ func (m scheduleAddModel) viewConfirm() string {
 	case scheduler.PreActionNew:
 		preActionDesc = "Send /new, wait 2 seconds"
 	}
-	lines = append(lines, labelStyle.Render("Pre-action:")+"  "+valueStyle.Render(preActionDesc))
+	lines = append(lines, wizLabelStyle.Render("Pre-action:")+"  "+wizValueStyle.Render(preActionDesc))
 
 	// Command
-	lines = append(lines, labelStyle.Render("Command:")+"     "+valueStyle.Render(m.commandInput))
+	lines = append(lines, wizLabelStyle.Render("Command:")+"     "+wizValueStyle.Render(m.commandInput))
 	lines = append(lines, "")
 
 	// Next run
 	nextRun, _ := scheduler.NextRun(m.selectedCron)
-	lines = append(lines, labelStyle.Render("Next run:")+"    "+valueStyle.Render(nextRun.Format("Mon Jan 2 at 3:04 PM")))
+	lines = append(lines, wizLabelStyle.Render("Next run:")+"    "+wizValueStyle.Render(nextRun.Format("Mon Jan 2 at 3:04 PM")))
 	lines = append(lines, "")
 
 	// Buttons
 	saveBtn := "   Save & Exit   "
 	cancelBtn := "     Cancel      "
 
-	saveBtnStyle := lipgloss.NewStyle().
-		Background(activeColor).
-		Foreground(lipgloss.Color("255")).
-		Padding(0, 1)
-	cancelBtnStyle := lipgloss.NewStyle().
-		Background(dimColor).
-		Foreground(lipgloss.Color("255")).
-		Padding(0, 1)
-
+	var saveBtnStyle, cancelBtnStyle lipgloss.Style
 	if m.cursor == 0 {
-		saveBtnStyle = saveBtnStyle.Bold(true)
+		saveBtnStyle = wizSaveBtnActiveStyle
+		cancelBtnStyle = wizCancelBtnStyle
 	} else {
-		cancelBtnStyle = cancelBtnStyle.Bold(true)
-		saveBtnStyle = saveBtnStyle.Background(dimColor)
-		cancelBtnStyle = cancelBtnStyle.Background(errorColor)
+		saveBtnStyle = wizSaveBtnInactiveStyle
+		cancelBtnStyle = wizCancelBtnActiveStyle
 	}
 
 	buttons := lipgloss.JoinHorizontal(lipgloss.Top,
@@ -801,9 +868,9 @@ func (m scheduleAddModel) viewConfirm() string {
 	lines = append(lines, buttons)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	box := boxStyle.Render(content)
+	box := wizBoxStyle.Render(content)
 
-	hints := lipgloss.NewStyle().Foreground(dimColor).Render("←→ select button │ Enter confirm │ Esc back")
+	hints := schedHintStyle.Render("←→ select button │ Enter confirm │ Esc back")
 
 	return lipgloss.Place(m.width, m.height,
 		lipgloss.Center, lipgloss.Center,

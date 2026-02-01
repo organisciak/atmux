@@ -278,22 +278,17 @@ func (m scheduleModel) View() string {
 
 	// Error message
 	if m.lastError != nil {
-		errStyle := lipgloss.NewStyle().Foreground(errorColor)
-		sections = append(sections, errStyle.Render("Error: "+m.lastError.Error()))
+		sections = append(sections, wizPreviewErrStyle.Render("Error: "+m.lastError.Error()))
 	}
 
 	// Delete confirmation
 	if m.confirmDelete {
-		confirmStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("196")).
-			Foreground(lipgloss.Color("255")).
-			Padding(0, 1)
-		sections = append(sections, confirmStyle.Render("Delete this schedule? (y/n)"))
+		sections = append(sections, schedConfirmStyle.Render("Delete this schedule? (y/n)"))
 	}
 
 	// Job list
 	if len(m.jobs) == 0 {
-		emptyStyle := lipgloss.NewStyle().Foreground(dimColor).Padding(1, 2)
+		emptyStyle := schedStatusDimStyle.Padding(1, 2)
 		sections = append(sections, emptyStyle.Render("No scheduled commands.\nPress 'a' to add one."))
 	} else {
 		for i, job := range m.jobs {
@@ -310,18 +305,12 @@ func (m scheduleModel) View() string {
 }
 
 func (m scheduleModel) renderTitle() string {
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(primaryColor).
+	titleStyle := schedTitleStyle.
 		Width(m.width).
 		Align(lipgloss.Center).
 		Padding(1, 0)
 
-	addBtn := lipgloss.NewStyle().
-		Background(activeColor).
-		Foreground(lipgloss.Color("255")).
-		Padding(0, 1).
-		Render("[+ Add]")
+	addBtn := schedAddBtnStyle.Render("[+ Add]")
 
 	title := titleStyle.Render("Scheduled Commands")
 	// Add button in corner
@@ -331,24 +320,25 @@ func (m scheduleModel) renderTitle() string {
 func (m scheduleModel) renderJob(job scheduler.ScheduledJob, selected bool) string {
 	// Status indicator
 	status := "●"
-	statusColor := activeColor
+	var statusStyle lipgloss.Style
 	if !job.Enabled {
 		status = "○"
-		statusColor = dimColor
+		statusStyle = schedStatusDimStyle
+	} else {
+		statusStyle = schedStatusActiveStyle
 	}
-	statusStyle := lipgloss.NewStyle().Foreground(statusColor)
 
 	// ID
-	idStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
+	idStyle := schedIDStyle
 	if !job.Enabled {
-		idStyle = lipgloss.NewStyle().Foreground(dimColor)
+		idStyle = schedStatusDimStyle
 	}
 
 	// Schedule description
 	scheduleDesc := scheduler.CronToEnglish(job.Schedule)
 	schedStyle := lipgloss.NewStyle()
 	if !job.Enabled {
-		schedStyle = schedStyle.Foreground(dimColor).Strikethrough(true)
+		schedStyle = schedStatusDimStyle.Strikethrough(true)
 	}
 
 	// First line: status, ID, schedule
@@ -358,12 +348,11 @@ func (m scheduleModel) renderJob(job scheduler.ScheduledJob, selected bool) stri
 		schedStyle.Render(scheduleDesc))
 
 	if !job.Enabled {
-		line1 += lipgloss.NewStyle().Foreground(dimColor).Render("  (disabled)")
+		line1 += schedStatusDimStyle.Render("  (disabled)")
 	}
 
 	// Second line: target
-	targetStyle := lipgloss.NewStyle().Foreground(dimColor)
-	line2 := fmt.Sprintf("  %s %s", targetStyle.Render("→"), job.Target)
+	line2 := fmt.Sprintf("  %s %s", schedTargetStyle.Render("→"), job.Target)
 
 	// Third line: command
 	cmdDesc := job.Command
@@ -375,14 +364,14 @@ func (m scheduleModel) renderJob(job scheduler.ScheduledJob, selected bool) stri
 	content := lipgloss.JoinVertical(lipgloss.Left, line1, line2, line3)
 
 	// Box style
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(dimColor).
+	boxStyle := borderStyle.
 		Width(m.width - 4).
 		Padding(0, 1)
 
 	if selected {
-		boxStyle = boxStyle.BorderForeground(primaryColor)
+		boxStyle = activeBorderStyle.
+			Width(m.width - 4).
+			Padding(0, 1)
 	}
 
 	return boxStyle.Render(content)
@@ -396,19 +385,17 @@ func (m scheduleModel) renderStatusBar() string {
 		hints = []string{"↑↓ select", "Space toggle", "a add", "d delete", "q quit"}
 	}
 
-	hintStyle := lipgloss.NewStyle().Foreground(dimColor)
-	separator := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render(" │ ")
+	separator := schedSeparatorStyle.Render(" │ ")
 
 	var styledHints []string
 	for _, hint := range hints {
-		styledHints = append(styledHints, hintStyle.Render(hint))
+		styledHints = append(styledHints, schedHintStyle.Render(hint))
 	}
 
 	hintsLine := strings.Join(styledHints, separator)
 
-	return lipgloss.NewStyle().
+	return statusBarStyle.
 		Width(m.width).
 		Align(lipgloss.Center).
-		Padding(1, 0).
 		Render(hintsLine)
 }
