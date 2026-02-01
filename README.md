@@ -36,14 +36,13 @@ brew uninstall atmux agent-tmux
 # Optional: brew untap organisciak/tap
 ```
 
-## Features
+## What you can do
 
-- One command to create or attach to a project session
-- Dedicated agent panes (codex, claude) plus a diagnostics window
-- Project-specific setup via `.agent-tmux.conf`
-- Interactive session browser with pane previews and command sending
-- Interactive sessions list with click-to-attach
-- Shell completions for bash, zsh, fish, and PowerShell
+- Save and revive projects. atmux keeps a recent history of projects you ran, so you can jump back in with `atmux sessions` or `atmux open`.
+- Move between sessions fast. The sessions list is a quick, clickable way to attach without hunting for names.
+- Control everything from one screen. `atmux browse` shows a tree of sessions, windows, and panes, lets you preview output, and send commands/escape to any pane without switching away.
+- Customize per project. Add a `.agent-tmux.conf` and define exactly which windows and panes you want for that repo.
+- Enjoy quality-of-life extras like shell completions and popup-friendly UIs.
 
 ## Installation
 
@@ -85,8 +84,8 @@ atmux
 ```
 
 This creates a session named `agent-my-app` with:
-- **agents** window: side-by-side panes running `codex --yolo` and `claude code --yolo`
-- **diag** window: diagnostics
+- **agents** window: panes running your configured agents (defaults are provided, and you can customize them)
+- Additional windows/panes from your `.agent-tmux.conf` (if present)
 
 ### Commands
 
@@ -96,10 +95,14 @@ atmux list            # List all atmux sessions
 atmux sessions        # Interactive sessions list (click or select to attach)
 atmux list-sessions   # Alias for sessions
 atmux browse          # Interactive session browser with pane previews
+atmux open            # Quick TUI to jump into active or recent sessions
 atmux attach NAME     # Attach to a specific session
 atmux kill NAME       # Kill a specific session
 atmux kill --all      # Kill all atmux sessions
 atmux init            # Create a .agent-tmux.conf template
+atmux history list    # Show recent sessions history
+atmux history remove  # Remove a specific history entry
+atmux history clear   # Clear history
 atmux version         # Show version info
 ```
 
@@ -111,7 +114,7 @@ atmux browse
 
 - Tree view of sessions, windows, and panes
 - Live preview of selected pane output
-- Send commands (and Escape) to a pane
+- Send commands (and Escape) to any pane from the same screen
 - Mouse and keyboard navigation
 - Optional popup mode: `atmux browse --popup`
 
@@ -138,12 +141,13 @@ atmux init
 ```conf
 # Comments start with #
 
-# Create a new window with horizontal panes
+# Example: one window with multiple panes
 window:dev
-pane:pnpm dev
+pane:npm run dev
 pane:pnpm run emulators
+pane:npm run build:watch
 
-# Create a window with vertical panes
+# Example: window with vertical panes
 window:logs
 vpane:tail -f logs/app.log
 vpane:tail -f logs/error.log
