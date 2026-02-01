@@ -118,6 +118,14 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.historyError = msg.err
 		m.clampSelection()
 		return m, nil
+	case historyDeletedMsg:
+		if msg.err != nil {
+			m.historyError = msg.err
+			return m, nil
+		}
+		m.historyEntries = removeHistoryEntry(m.historyEntries, msg.id)
+		m.clampSelection()
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -139,6 +147,11 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			return m.selectCurrent()
+		case "x", "delete", "backspace":
+			if cmd := m.deleteSelectedHistoryEntry(); cmd != nil {
+				return m, cmd
+			}
+			return m, nil
 		}
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
@@ -222,7 +235,7 @@ func (m sessionsModel) View() string {
 	}
 
 	title := lipgloss.NewStyle().Bold(true).Render("Sessions")
-	subtitle := lipgloss.NewStyle().Foreground(dimColor).Render("↑↓ select, Enter attach, q quit")
+	subtitle := lipgloss.NewStyle().Foreground(dimColor).Render("↑↓ select, Enter attach, x remove, q quit")
 
 	var sections []string
 	sections = append(sections, title, subtitle, "")
@@ -230,6 +243,10 @@ func (m sessionsModel) View() string {
 	// Error display
 	if m.lastError != nil {
 		err := lipgloss.NewStyle().Foreground(errorColor).Render("Error: " + m.lastError.Error())
+		sections = append(sections, err)
+	}
+	if m.historyError != nil {
+		err := lipgloss.NewStyle().Foreground(errorColor).Render("History error: " + m.historyError.Error())
 		sections = append(sections, err)
 	}
 
@@ -263,9 +280,11 @@ func (m sessionsModel) View() string {
 		for i, entry := range m.historyEntries {
 			globalIdx := len(m.lines) + i
 			ago := sessionsTimeAgo(entry.LastUsedAt)
-			row := fmt.Sprintf("  %s  %s", entry.Name, lipgloss.NewStyle().Foreground(dimColor).Render("("+ago+")"))
+			meta := lipgloss.NewStyle().Foreground(dimColor).Render("(" + ago + ")")
+			dir := lipgloss.NewStyle().Foreground(dimColor).Render(entry.WorkingDirectory)
+			row := fmt.Sprintf("  %s  %s  %s", entry.Name, meta, dir)
 			if globalIdx == m.selectedIndex {
-				row = selectedStyle.Render(fmt.Sprintf("> %s  (%s)", entry.Name, ago))
+				row = selectedStyle.Render(fmt.Sprintf("> %s  %s  %s", entry.Name, meta, dir))
 			}
 			sections = append(sections, row)
 		}
@@ -286,6 +305,46 @@ func sessionsTimeAgo(t time.Time) string {
 	default:
 		return t.Format("Jan 2")
 	}
+}
+
+type historyDeletedMsg struct {
+	id  int64
+	err error
+}
+
+func (m sessionsModel) selectedHistoryEntry() (history.Entry, bool) {
+	if m.selectedIndex < len(m.lines) {
+		return history.Entry{}, false
+	}
+	idx := m.selectedIndex - len(m.lines)
+	if idx < 0 || idx >= len(m.historyEntries) {
+		return history.Entry{}, false
+	}
+	return m.historyEntries[idx], true
+}
+
+func (m sessionsModel) deleteSelectedHistoryEntry() tea.Cmd {
+	entry, ok := m.selectedHistoryEntry()
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		store, err := history.Open()
+		if err != nil {
+			return historyDeletedMsg{id: entry.ID, err: err}
+		}
+		defer store.Close()
+		return historyDeletedMsg{id: entry.ID, err: store.DeleteEntry(entry.ID)}
+	}
+}
+
+func removeHistoryEntry(entries []history.Entry, id int64) []history.Entry {
+	for i, entry := range entries {
+		if entry.ID == id {
+			return append(entries[:i], entries[i+1:]...)
+		}
+	}
+	return entries
 }
 
 func (m sessionsModel) memorySummary(sessionName string) string {
