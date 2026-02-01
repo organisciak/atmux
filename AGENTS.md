@@ -61,6 +61,9 @@ bd list --status=open # All open issues
 bd show <id>          # Full issue details with dependencies
 bd create --title="..." --type=task --priority=2
 bd update <id> --status=in_progress
+bd update <id> --notes="PLAN: ..."
+bd label add <id> planned
+bd label remove <id> needs-plan
 bd close <id> --reason="Completed"
 bd close <id1> <id2>  # Close multiple issues at once
 bd sync               # Commit and push changes
@@ -73,6 +76,24 @@ bd sync               # Commit and push changes
 3. **Work**: Implement the task
 4. **Complete**: Use `bd close <id>`
 5. **Sync**: Always run `bd sync` at session end
+
+<!-- end-bv-agent-instructions -->
+
+### Planning Flow
+
+1. **Capture**: Create issues with `needs-plan` label.
+2. **Plan**: Add a structured plan in notes (PLAN / ACCEPTANCE / RISKS).
+3. **Mark planned**: Swap labels (`planned` on, `needs-plan` off).
+4. **Gate**: Only move to `in_progress` when `planned` is set.
+
+```bash
+bd create --title="..." --type=task --priority=2 --label needs-plan
+bd update <id> --notes "PLAN:\n1) ...\n2) ...\n\nACCEPTANCE:\n- ...\n\nRISKS/QUESTIONS:\n- ..."
+bd label add <id> planned
+bd label remove <id> needs-plan
+bd list --status=open --label planned
+bd list --status=open --label needs-plan
+```
 
 ### Key Concepts
 
@@ -102,4 +123,3 @@ git push                # Push to remote
 - Use descriptive titles and set appropriate priority/type
 - Always `bd sync` before ending session
 
-<!-- end-bv-agent-instructions -->
