@@ -21,7 +21,7 @@ type ScheduleAddResult struct {
 // RunScheduleAddTUI runs the schedule add wizard
 func RunScheduleAddTUI() (*ScheduleAddResult, error) {
 	m := newScheduleAddModel()
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(m, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
 		return nil, err

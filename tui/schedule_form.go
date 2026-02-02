@@ -661,7 +661,7 @@ func (m scheduleFormModel) renderStatusBar() string {
 // RunScheduleFormTUI runs the single-screen form for adding schedules
 func RunScheduleFormTUI() (*ScheduleAddResult, error) {
 	m := newScheduleFormModel()
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(m, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
 		return nil, err

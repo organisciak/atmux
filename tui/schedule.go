@@ -17,7 +17,7 @@ type ScheduleResult struct {
 // RunScheduleTUI runs the schedule management TUI
 func RunScheduleTUI() (*ScheduleResult, error) {
 	m := newScheduleModel()
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(m, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
 		return nil, err
