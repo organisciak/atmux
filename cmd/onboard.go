@@ -90,11 +90,9 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 	// Commands
 	fmt.Fprintln(out, sectionStyle.Render("All Commands"))
 	fmt.Fprintln(out, "  "+codeStyle.Render("atmux")+"              Show landing page (configurable default)")
-	fmt.Fprintln(out, "  "+codeStyle.Render("atmux sessions")+"     List sessions with click-to-attach")
+	fmt.Fprintln(out, "  "+codeStyle.Render("atmux sessions [NAME]")+"  List sessions or attach directly")
 	fmt.Fprintln(out, "  "+codeStyle.Render("atmux browse")+"       Full session/window/pane browser")
-	fmt.Fprintln(out, "  "+codeStyle.Render("atmux attach NAME")+"  Attach to a specific session")
 	fmt.Fprintln(out, "  "+codeStyle.Render("atmux kill NAME")+"    Kill a session")
-	fmt.Fprintln(out, "  "+codeStyle.Render("atmux list")+"         Simple session list (non-interactive)")
 	fmt.Fprintln(out, "  "+codeStyle.Render("atmux init")+"         Create a sample .agent-tmux.conf")
 	fmt.Fprintln(out)
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/porganisciak/agent-tmux/tmux"
 	"github.com/porganisciak/agent-tmux/tui"
@@ -11,9 +12,10 @@ import (
 )
 
 var sessionsCmd = &cobra.Command{
-	Use:     "sessions",
-	Aliases: []string{"lsessions", "list-sessions"},
-	Short:   "List all tmux sessions with click-to-attach",
+	Use:     "sessions [session-name]",
+	Aliases: []string{"lsessions", "list-sessions", "list", "ls", "attach"},
+	Short:   "List sessions or attach directly by name",
+	Args:    cobra.MaximumNArgs(1),
 	RunE:    runSessions,
 }
 
@@ -31,6 +33,10 @@ func init() {
 }
 
 func runSessions(cmd *cobra.Command, args []string) error {
+	if len(args) > 0 {
+		return attachToSession(args[0])
+	}
+
 	// Non-interactive mode: just print and exit
 	if sessionsNonInteractive {
 		lines, err := tmux.ListSessionsRaw()
@@ -71,4 +77,18 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName)
 	}
 	return tmux.AttachToSession(result.SessionName)
+}
+
+func attachToSession(name string) error {
+	sessionName := name
+	if !strings.HasPrefix(sessionName, "agent-") && !strings.HasPrefix(sessionName, "atmux-") {
+		sessionName = "agent-" + sessionName
+	}
+
+	session := &tmux.Session{Name: sessionName}
+	if !session.Exists() {
+		return fmt.Errorf("session %s does not exist\nUse 'atmux sessions' to see active sessions", sessionName)
+	}
+
+	return session.Attach()
 }

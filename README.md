@@ -94,12 +94,12 @@ This creates a session named `agent-my-app` with:
 
 ```bash
 atmux                 # Start or attach to session for current directory
-atmux list            # List all atmux sessions
-atmux sessions        # Interactive sessions list (click or select to attach)
+atmux sessions [NAME] # Interactive sessions list or attach directly by name
+atmux list            # Alias for sessions
+atmux attach NAME     # Alias for sessions NAME
 atmux list-sessions   # Alias for sessions
 atmux browse          # Interactive session browser with pane previews
 atmux open            # Quick TUI to jump into active or recent sessions
-atmux attach NAME     # Attach to a specific session
 atmux kill NAME       # Kill a specific session
 atmux kill --all      # Kill all atmux sessions
 atmux init            # Create a .agent-tmux.conf template

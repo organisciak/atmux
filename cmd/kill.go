@@ -34,7 +34,7 @@ func runKill(cmd *cobra.Command, args []string) error {
 		// Try to kill session for current directory
 		session := tmux.NewSession(".")
 		if !session.Exists() {
-			return fmt.Errorf("no session found for current directory\nUse 'atmux list' to see active sessions")
+			return fmt.Errorf("no session found for current directory\nUse 'atmux sessions' to see active sessions")
 		}
 		return killSession(session.Name)
 	}
