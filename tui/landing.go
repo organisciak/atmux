@@ -411,7 +411,7 @@ func (m landingModel) renderResumeSection() string {
 	if sessionExists {
 		actionText = fmt.Sprintf("Resume session: %s", m.sessionName)
 	} else {
-		actionText = fmt.Sprintf("Start new session: %s", m.sessionName)
+		actionText = fmt.Sprintf("Start session here: %s", m.sessionName)
 	}
 
 	style := lipgloss.NewStyle().Foreground(primaryColor)
@@ -434,7 +434,7 @@ func (m landingModel) renderSessionsSection() string {
 		Bold(true).
 		Foreground(secondaryColor)
 
-	header := headerStyle.Render("Load Session")
+	header := headerStyle.Render("Attach Active Session")
 	divider := lipgloss.NewStyle().Foreground(dimColor).Render(strings.Repeat("─", 12))
 
 	var rows []string
