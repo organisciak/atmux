@@ -74,6 +74,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, fetchPreview(node.Target))
 		}
 		return m, tea.Batch(cmds...)
+
+	case KillCompletedMsg:
+		if msg.Err != nil {
+			m.lastError = msg.Err
+		} else {
+			// Successfully killed, refresh tree
+			return m, fetchTree
+		}
+		return m, nil
 	}
 
 	// Update focused component
@@ -101,6 +110,21 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if msg.String() != "ctrl+c" {
 		m.ctrlCPrimed = false
+	}
+
+	// Handle kill confirmation if active
+	if m.confirmKill {
+		switch msg.String() {
+		case "y", "Y":
+			// Confirm kill
+			m.confirmKill = false
+			return m, killTarget(m.killNodeType, m.killNodeTarget)
+		case "n", "N", "esc":
+			// Cancel kill
+			m.confirmKill = false
+			return m, nil
+		}
+		return m, nil // Ignore other keys while confirmation is shown
 	}
 
 	// Close help overlay first if open
@@ -236,6 +260,15 @@ func (m Model) handleTreeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.pushInputHistory(cmd)
 				return m, sendCommand(node.Target, cmd, m.sendMethod)
 			}
+		}
+	case "x", "d":
+		// Kill selected session/window/pane (with confirmation)
+		if node := m.selectedNode(); node != nil {
+			m.confirmKill = true
+			m.killNodeType = node.Type
+			m.killNodeTarget = node.Target
+			m.killNodeName = node.Name
+			return m, nil
 		}
 	}
 	return m, nil

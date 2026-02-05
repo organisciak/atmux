@@ -92,6 +92,12 @@ type Model struct {
 
 	// Help overlay
 	showHelp bool
+
+	// Kill confirmation state
+	confirmKill    bool   // Whether we're showing kill confirmation
+	killNodeType   string // Type of node being killed (session/window/pane)
+	killNodeTarget string // Target of node being killed
+	killNodeName   string // Name of node being killed (for display)
 }
 
 // buttonZone tracks a clickable button area
@@ -160,6 +166,14 @@ func sendEscape(target string) tea.Cmd {
 	return func() tea.Msg {
 		err := tmux.SendEscape(target)
 		return CommandSentMsg{Target: target, Command: "Escape", Err: err}
+	}
+}
+
+// killTarget kills a session, window, or pane.
+func killTarget(nodeType, target string) tea.Cmd {
+	return func() tea.Msg {
+		err := tmux.KillTarget(nodeType, target)
+		return KillCompletedMsg{NodeType: nodeType, Target: target, Err: err}
 	}
 }
 

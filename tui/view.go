@@ -30,6 +30,11 @@ func (m Model) View() string {
 		return m.renderHelpOverlay(base)
 	}
 
+	// Show kill confirmation overlay if active
+	if m.confirmKill {
+		return m.renderKillConfirmOverlay(base)
+	}
+
 	return base
 }
 
@@ -236,7 +241,7 @@ func (m Model) renderStatusBar() string {
 
 	// Keyboard shortcuts hint (only shown when not in input mode)
 	if m.focused != FocusInput {
-		hint := "[r]efresh [a]ttach [/]input [?]help"
+		hint := "[r]efresh [a]ttach [x]kill [/]input [?]help"
 		if m.options.DebugMode {
 			hint += " [m]ethod"
 		}
@@ -309,6 +314,7 @@ func (m Model) renderHelpOverlay(base string) string {
 		{"Enter/Space", "Expand/collapse node"},
 		{"a", "Attach to selected session"},
 		{"s", "Send command to selected pane"},
+		{"x or d", "Kill selected session/window/pane"},
 		{"/", "Focus command input"},
 		{"r", "Refresh tree"},
 		{"M", "Toggle mouse support"},
@@ -435,4 +441,54 @@ func placeOverlay(x, y int, overlay, background string) string {
 	}
 
 	return strings.Join(bgLines, "\n")
+}
+
+// renderKillConfirmOverlay renders the kill confirmation overlay
+func (m Model) renderKillConfirmOverlay(base string) string {
+	// Build confirmation content
+	title := helpTitleStyle.Render("Confirm Kill")
+
+	typeLabel := m.killNodeType
+	nameDisplay := m.killNodeName
+	if nameDisplay == "" {
+		nameDisplay = m.killNodeTarget
+	}
+
+	message := fmt.Sprintf("Kill %s '%s'?", typeLabel, nameDisplay)
+	messageStyled := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("15")).
+		Bold(true).
+		Render(message)
+
+	hint := lipgloss.NewStyle().
+		Foreground(dimColor).
+		Render("Press [y] to confirm, [n] or [Esc] to cancel")
+
+	confirmContent := strings.Join([]string{
+		title,
+		"",
+		messageStyled,
+		"",
+		hint,
+	}, "\n")
+
+	// Apply overlay style
+	confirmBox := helpOverlayStyle.
+		Width(50).
+		Render(confirmContent)
+
+	confirmWidth := lipgloss.Width(confirmBox)
+	confirmHeight := lipgloss.Height(confirmBox)
+
+	// Center the overlay
+	x := (m.width - confirmWidth) / 2
+	y := (m.height - confirmHeight) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+
+	return placeOverlay(x, y, confirmBox, base)
 }
