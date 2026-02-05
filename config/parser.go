@@ -22,10 +22,19 @@ type AgentConfig struct {
 	Command string
 }
 
+// RemoteHostConfig represents a remote host configuration
+type RemoteHostConfig struct {
+	Host         string
+	Port         int
+	AttachMethod string
+	Alias        string
+}
+
 type Config struct {
-	Windows     []WindowConfig // New windows to create
-	AgentPanes  []PaneConfig   // Extra panes to add to agents window
-	CoreAgents  []AgentConfig  // Core agent panes (from agent: directive)
+	Windows     []WindowConfig     // New windows to create
+	AgentPanes  []PaneConfig       // Extra panes to add to agents window
+	CoreAgents  []AgentConfig      // Core agent panes (from agent: directive)
+	RemoteHosts []RemoteHostConfig // Remote hosts for sessions list
 }
 
 // DefaultConfigName is the name of the config file to look for

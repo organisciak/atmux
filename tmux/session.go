@@ -21,6 +21,7 @@ type Session struct {
 type SessionLine struct {
 	Name string
 	Line string
+	Host string // Remote host label (empty for local)
 }
 
 // NewSession creates a new session configuration based on the current directory
@@ -208,6 +209,26 @@ func parseSessionLine(line string) SessionLine {
 func KillSession(name string) error {
 	cmd := exec.Command("tmux", "kill-session", "-t", name)
 	return cmd.Run()
+}
+
+// ListSessionsRawWithExecutor returns tmux list-sessions output using the given executor.
+func ListSessionsRawWithExecutor(exec TmuxExecutor) ([]SessionLine, error) {
+	output, err := exec.Output("list-sessions")
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	var sessions []SessionLine
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		sl := parseSessionLine(line)
+		sl.Host = exec.HostLabel()
+		sessions = append(sessions, sl)
+	}
+	return sessions, nil
 }
 
 // GetSessionPath returns the working directory of a tmux session.
