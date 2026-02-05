@@ -31,9 +31,27 @@ Examples:
   atmux keybind --key C-s    # Adds: bind-key C-s run-shell "atmux browse"
   atmux keybind -y           # Skip confirmation
 
+Subcommands:
+  atmux keybind show         # Print the keybinding snippet (ready to copy-paste)
+
 After adding the keybinding, reload your tmux config:
   tmux source-file ~/.tmux.conf`,
 	RunE: runKeybind,
+}
+
+var keybindShowCmd = &cobra.Command{
+	Use:   "show",
+	Short: "Print the recommended tmux keybinding snippet",
+	Long: `Prints the recommended keybinding snippet for copy-pasting into ~/.tmux.conf.
+
+This is useful if you want to manually add the binding or include it in a
+dotfiles repository.
+
+Examples:
+  atmux keybind show                  # Show default binding (prefix + S)
+  atmux keybind show --key T          # Show binding for prefix + T
+  atmux keybind show --command sessions  # Show binding for sessions command`,
+	Run: runKeybindShow,
 }
 
 func init() {
@@ -41,6 +59,31 @@ func init() {
 	keybindCmd.Flags().StringVarP(&keybindKey, "key", "k", "S", "Key to bind (e.g., S, C-s, M-s)")
 	keybindCmd.Flags().BoolVarP(&keybindYes, "yes", "y", false, "Skip confirmation prompt")
 	keybindCmd.Flags().StringVar(&keybindCommand, "command", "browse", "Command to run (browse or sessions)")
+
+	// Add show subcommand
+	keybindCmd.AddCommand(keybindShowCmd)
+	keybindShowCmd.Flags().StringVarP(&keybindKey, "key", "k", "S", "Key to bind (e.g., S, C-s, M-s)")
+	keybindShowCmd.Flags().StringVar(&keybindCommand, "command", "browse", "Command to run (browse or sessions)")
+}
+
+func runKeybindShow(cmd *cobra.Command, args []string) {
+	// Validate command
+	if keybindCommand != "browse" && keybindCommand != "sessions" {
+		fmt.Fprintf(os.Stderr, "Error: --command must be 'browse' or 'sessions'\n")
+		os.Exit(1)
+	}
+
+	// Build the binding line
+	bindingLine := fmt.Sprintf("bind-key %s run-shell \"atmux %s\"", keybindKey, keybindCommand)
+	commentLine := "# atmux: open session browser popup"
+
+	fmt.Println("# Add this to ~/.tmux.conf:")
+	fmt.Println(commentLine)
+	fmt.Println(bindingLine)
+	fmt.Println()
+	fmt.Println("# Then reload your config:")
+	fmt.Println("# tmux source-file ~/.tmux.conf")
+	fmt.Printf("#\n# Press prefix + %s to open the session browser.\n", keybindKey)
 }
 
 func runKeybind(cmd *cobra.Command, args []string) error {
