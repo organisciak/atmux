@@ -49,6 +49,7 @@ type TreeNode struct {
 	Level    int
 	Active   bool
 	Attached bool // For sessions
+	Host     string // Remote host label (empty for local)
 	Children []*TreeNode
 }
 
@@ -331,6 +332,45 @@ func KillTarget(nodeType, target string) error {
 // This is equivalent to what tmux choose-tree does when you select a target.
 func SwitchToTarget(target string) error {
 	return exec.Command("tmux", "switch-client", "-t", target).Run()
+}
+
+// SendCommandWithMethodAndExecutor sends a command using the specified method and executor.
+func SendCommandWithMethodAndExecutor(target, command string, method SendMethod, exec TmuxExecutor) error {
+	switch method {
+	case SendMethodEnterSeparate:
+		if err := exec.Run("send-keys", "-t", target, command); err != nil {
+			return err
+		}
+		return exec.Run("send-keys", "-t", target, "Enter")
+	case SendMethodCmSeparate:
+		if err := exec.Run("send-keys", "-t", target, command); err != nil {
+			return err
+		}
+		return exec.Run("send-keys", "-t", target, "C-m")
+	case SendMethodEnterAppended:
+		return exec.Run("send-keys", "-t", target, command, "Enter")
+	case SendMethodCmAppended:
+		return exec.Run("send-keys", "-t", target, command, "C-m")
+	case SendMethodEnterLiteral:
+		if err := exec.Run("send-keys", "-t", target, "-l", command); err != nil {
+			return err
+		}
+		return exec.Run("send-keys", "-t", target, "Enter")
+	case SendMethodEnterDelayed:
+		if err := exec.Run("send-keys", "-t", target, command); err != nil {
+			return err
+		}
+		time.Sleep(500 * time.Millisecond)
+		return exec.Run("send-keys", "-t", target, "Enter")
+	case SendMethodEnterDelayedLong:
+		if err := exec.Run("send-keys", "-t", target, command); err != nil {
+			return err
+		}
+		time.Sleep(1500 * time.Millisecond)
+		return exec.Run("send-keys", "-t", target, "Enter")
+	default:
+		return SendCommandWithMethodAndExecutor(target, command, SendMethodEnterSeparate, exec)
+	}
 }
 
 // SendCommandWithMethod sends a command using the specified method
