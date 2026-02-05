@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // View renders the TUI
@@ -73,6 +74,25 @@ func (m *Model) renderTree() string {
 
 		selected := i == m.selectedIndex
 		indent := strings.Repeat("  ", node.Level)
+
+		// Host header nodes get special rendering
+		if node.Type == "host" {
+			icon := getNodeIcon("session", node.Expanded, false) // reuse expand/collapse icon
+			hostLabel := remoteHostStyle.Render(node.Name)
+			if node.Name != "local" {
+				hostLabel = remoteIndicatorStyle.Render("@ ") + remoteHostStyle.Render(node.Name)
+			}
+			line := indent + icon + " " + hostLabel
+			if selected {
+				line = indent + icon + " " + selectedStyle.Inherit(remoteHostStyle).Render(node.Name)
+				if node.Name != "local" {
+					line = indent + icon + " " + remoteIndicatorStyle.Render("@ ") + selectedStyle.Inherit(remoteHostStyle).Render(node.Name)
+				}
+			}
+			lines = append(lines, line)
+			continue
+		}
+
 		icon := getNodeIcon(node.Type, node.Expanded, node.Active)
 		style := getNodeStyle(node.Type, node.Active, selected)
 
@@ -178,13 +198,17 @@ func (m Model) renderPreview() string {
 			Render("No pane selected")
 	}
 
-	// Header showing target
+	// Header showing target (with host label for remote)
 	header := ""
 	if node := m.selectedNode(); node != nil && node.Type == "pane" {
+		targetStr := node.Target
+		if node.Host != "" {
+			targetStr = remoteIndicatorStyle.Render("@"+node.Host) + " " + targetStr
+		}
 		header = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(primaryColor).
-			Render(node.Target) + "\n"
+			Render(targetStr) + "\n"
 	}
 
 	// Apply border style
@@ -350,6 +374,7 @@ func (m Model) renderHelpOverlay(base string) string {
 }
 
 // placeOverlay places an overlay string on top of a background at position (x, y)
+// Uses ANSI-aware string operations to properly handle styled text
 func placeOverlay(x, y int, overlay, background string) string {
 	bgLines := strings.Split(background, "\n")
 	ovLines := strings.Split(overlay, "\n")
@@ -361,22 +386,34 @@ func placeOverlay(x, y int, overlay, background string) string {
 		}
 
 		bgLine := bgLines[bgY]
-		bgRunes := []rune(bgLine)
+		bgWidth := lipgloss.Width(bgLine)
+		ovWidth := lipgloss.Width(ovLine)
 
-		// Pad background line if needed
-		for len(bgRunes) < x+lipgloss.Width(ovLine) {
-			bgRunes = append(bgRunes, ' ')
-		}
+		// Build the new line: left part + overlay + right part
+		var result strings.Builder
 
-		// Insert overlay line
-		ovRunes := []rune(ovLine)
-		for j, r := range ovRunes {
-			if x+j >= 0 && x+j < len(bgRunes) {
-				bgRunes[x+j] = r
+		// Left part of background (before overlay)
+		if x > 0 {
+			left := ansi.Truncate(bgLine, x, "")
+			result.WriteString(left)
+			// Pad if background is shorter than x
+			leftWidth := lipgloss.Width(left)
+			for j := leftWidth; j < x; j++ {
+				result.WriteRune(' ')
 			}
 		}
 
-		bgLines[bgY] = string(bgRunes)
+		// The overlay line itself
+		result.WriteString(ovLine)
+
+		// Right part of background (after overlay)
+		rightStart := x + ovWidth
+		if rightStart < bgWidth {
+			right := ansi.Cut(bgLine, rightStart, bgWidth)
+			result.WriteString(right)
+		}
+
+		bgLines[bgY] = result.String()
 	}
 
 	return strings.Join(bgLines, "\n")
