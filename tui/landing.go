@@ -551,15 +551,13 @@ func (m landingModel) renderStatusBar() string {
 
 	hintsLine := strings.Join(styledHints, separator)
 
-	onboardHint := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		Render("New to atmux? Run `atmux onboard` for a quick guide.")
+	tip := RenderTip()
 
 	return lipgloss.NewStyle().
 		Width(m.width).
 		Align(lipgloss.Center).
 		Padding(1, 0).
-		Render(lipgloss.JoinVertical(lipgloss.Center, hintsLine, onboardHint))
+		Render(lipgloss.JoinVertical(lipgloss.Center, hintsLine, tip))
 }
 
 func (m landingModel) sessionExists() bool {

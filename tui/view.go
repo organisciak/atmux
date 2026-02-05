@@ -284,7 +284,18 @@ func (m Model) renderStatusBar() string {
 	}
 
 	status := strings.Join(parts, " | ")
-	return statusBarStyle.Width(m.width - 2).Render(status)
+	statusLine := statusBarStyle.Width(m.width - 2).Render(status)
+
+	// Add tip below status bar (only when not in input mode)
+	if m.focused != FocusInput {
+		tip := lipgloss.NewStyle().
+			Width(m.width - 2).
+			Align(lipgloss.Center).
+			Render(RenderTip())
+		return lipgloss.JoinVertical(lipgloss.Left, statusLine, tip)
+	}
+
+	return statusLine
 }
 
 // renderHelpOverlay renders the help overlay on top of the base view

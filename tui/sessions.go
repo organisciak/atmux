@@ -395,6 +395,9 @@ func (m sessionsModel) View() string {
 		}
 	}
 
+	// Add tip at the bottom
+	sections = append(sections, "", RenderTip())
+
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
