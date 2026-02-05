@@ -96,8 +96,9 @@ func (m *Model) renderTree() string {
 		icon := getNodeIcon(node.Type, node.Expanded, node.Active)
 		style := getNodeStyle(node.Type, node.Active, selected)
 
-		// Build the line
+		// Build the line - for sessions, use dimmed prefix formatting
 		name := node.Name
+		useFormattedName := node.Type == "session"
 
 		// Calculate button widths based on node type
 		attButton := attachButtonStyle.Render("ATT")
@@ -115,7 +116,13 @@ func (m *Model) renderTree() string {
 			name = name[:maxNameLen-3] + "..."
 		}
 
-		line := indent + icon + " " + style.Render(name)
+		var styledName string
+		if useFormattedName {
+			styledName = formatSessionName(name, style)
+		} else {
+			styledName = style.Render(name)
+		}
+		line := indent + icon + " " + styledName
 
 		// Add buttons based on node type
 		if node.Type == "pane" {

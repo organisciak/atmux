@@ -235,12 +235,12 @@ func (m openModel) View() string {
 		} else {
 			for i, s := range m.activeSessions {
 				num := numStyle.Render(fmt.Sprintf("%d.", i+1))
-				name := s.Name
+				var name string
 				if i == m.selectedIndex {
-					name = selectedStyle.Render("> " + s.Name)
+					name = selectedStyle.Render("> ") + formatSessionName(s.Name, selectedStyle)
 					num = ""
 				} else {
-					name = "  " + name
+					name = "  " + formatSessionName(s.Name, lipgloss.NewStyle())
 				}
 				items = append(items, fmt.Sprintf("%s %s", num, name))
 			}
@@ -252,12 +252,12 @@ func (m openModel) View() string {
 			for i, e := range m.historyEntries {
 				num := numStyle.Render(fmt.Sprintf("%d.", i+1))
 				ago := openTimeAgo(e.LastUsedAt)
-				name := fmt.Sprintf("%s  %s", e.Name, hintStyle.Render("("+ago+")"))
+				var name string
 				if i == m.selectedIndex {
-					name = selectedStyle.Render(fmt.Sprintf("> %s  (%s)", e.Name, ago))
+					name = selectedStyle.Render("> ") + formatSessionName(e.Name, selectedStyle) + "  " + selectedStyle.Render("("+ago+")")
 					num = ""
 				} else {
-					name = "  " + name
+					name = "  " + formatSessionName(e.Name, lipgloss.NewStyle()) + "  " + hintStyle.Render("("+ago+")")
 				}
 				items = append(items, fmt.Sprintf("%s %s", num, name))
 			}

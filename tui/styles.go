@@ -2,6 +2,8 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
+import "strings"
+
 var (
 	// Colors
 	primaryColor   = lipgloss.Color("39")  // Cyan
@@ -10,6 +12,18 @@ var (
 	dimColor       = lipgloss.Color("240") // Gray
 	errorColor     = lipgloss.Color("196") // Red
 	buttonColor    = lipgloss.Color("33")  // Blue
+
+	// Dimmed prefix style for agent-/atmux- session names
+	agentPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243")) // Slightly dimmed
+
+	// Remote host styles
+	remoteHostColor = lipgloss.Color("214") // Orange
+	remoteHostStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(remoteHostColor)
+
+	remoteIndicatorStyle = lipgloss.NewStyle().
+				Foreground(remoteHostColor)
 
 	// Border styles
 	borderStyle = lipgloss.NewStyle().
@@ -283,4 +297,39 @@ func getNodeIcon(nodeType string, expanded, active bool) string {
 		return paneIcon
 	}
 	return "   "
+}
+
+// agentPrefixes are the session name prefixes used by atmux
+var agentPrefixes = []string{"agent-", "atmux-"}
+
+// formatSessionName formats a session name with a dimmed agent-/atmux- prefix.
+// If the name doesn't have a known prefix, it returns the name unstyled.
+func formatSessionName(name string, nameStyle lipgloss.Style) string {
+	for _, prefix := range agentPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			dimmedPrefix := agentPrefixStyle.Render(prefix)
+			rest := nameStyle.Render(strings.TrimPrefix(name, prefix))
+			return dimmedPrefix + rest
+		}
+	}
+	return nameStyle.Render(name)
+}
+
+// formatSessionLine formats a session line (from tmux list-sessions) with a dimmed prefix.
+// The line format is "sessionName: N windows ..." so we only dim the prefix in the name part.
+func formatSessionLine(line string, lineStyle lipgloss.Style) string {
+	for _, prefix := range agentPrefixes {
+		if strings.HasPrefix(line, prefix) {
+			// Find where the session name ends (at the colon)
+			colonIdx := strings.Index(line, ":")
+			if colonIdx == -1 {
+				// No colon, treat whole line as name
+				return formatSessionName(line, lineStyle)
+			}
+			sessionName := line[:colonIdx]
+			rest := line[colonIdx:]
+			return formatSessionName(sessionName, lineStyle) + lineStyle.Render(rest)
+		}
+	}
+	return lineStyle.Render(line)
 }

@@ -13,18 +13,25 @@ import (
 
 type SessionsOptions struct {
 	AltScreen bool
+	Executors []tmux.TmuxExecutor // Executors for local + remote hosts
 }
 
 // SessionsResult contains the outcome of the sessions list interaction.
 type SessionsResult struct {
-	SessionName   string // Session selected for attach, empty if quit
-	WorkingDir    string // Working directory for revival (if from history)
-	IsFromHistory bool   // True if reviving from history rather than attaching
+	SessionName   string           // Session selected for attach, empty if quit
+	WorkingDir    string           // Working directory for revival (if from history)
+	IsFromHistory bool             // True if reviving from history rather than attaching
+	Host          string           // Host label for remote sessions ("" for local)
+	Executor      tmux.TmuxExecutor // The executor for the selected session
 }
 
 // RunSessionsList runs a simple session list UI and returns the selected session.
 func RunSessionsList(opts SessionsOptions) (*SessionsResult, error) {
-	m := newSessionsModel()
+	executors := opts.Executors
+	if len(executors) == 0 {
+		executors = []tmux.TmuxExecutor{tmux.NewLocalExecutor()}
+	}
+	m := newSessionsModel(executors)
 	programOptions := []tea.ProgramOption{
 		tea.WithMouseCellMotion(),
 	}
@@ -37,10 +44,21 @@ func RunSessionsList(opts SessionsOptions) (*SessionsResult, error) {
 		return nil, err
 	}
 	if model, ok := finalModel.(sessionsModel); ok {
+		var exec tmux.TmuxExecutor
+		if model.executorMap != nil {
+			if e, ok := model.executorMap[model.selectedHost]; ok {
+				exec = e
+			}
+		}
+		if exec == nil && len(executors) > 0 {
+			exec = executors[0]
+		}
 		return &SessionsResult{
 			SessionName:   model.attachSession,
 			WorkingDir:    model.reviveDir,
 			IsFromHistory: model.isHistorySelection,
+			Host:          model.selectedHost,
+			Executor:      exec,
 		}, nil
 	}
 	return &SessionsResult{}, nil
@@ -56,22 +74,31 @@ type sessionsModel struct {
 	attachSession      string
 	reviveDir          string
 	isHistorySelection bool
+	selectedHost       string
 	lastError          error
 	historyError       error
 	memoryError        error
+	executors          []tmux.TmuxExecutor
+	executorMap        map[string]tmux.TmuxExecutor
 }
 
-func newSessionsModel() sessionsModel {
-	return sessionsModel{selectedIndex: 0}
+func newSessionsModel(executors []tmux.TmuxExecutor) sessionsModel {
+	executorMap := make(map[string]tmux.TmuxExecutor, len(executors))
+	for _, exec := range executors {
+		executorMap[exec.HostLabel()] = exec
+	}
+	return sessionsModel{
+		selectedIndex: 0,
+		executors:     executors,
+		executorMap:   executorMap,
+	}
 }
 
 func (m sessionsModel) Init() tea.Cmd {
 	return tea.Batch(
+		m.fetchAllSessions(),
 		func() tea.Msg {
-			lines, err := tmux.ListSessionsRaw()
-			return sessionsLoadedMsg{lines: lines, err: err}
-		},
-		func() tea.Msg {
+			// Only fetch memory for local sessions
 			memory, err := tmux.FetchSessionMemory()
 			return memoryLoadedMsg{memory: memory, err: err}
 		},
@@ -85,6 +112,21 @@ func (m sessionsModel) Init() tea.Cmd {
 			return historyLoadedMsg{entries: entries, err: err}
 		},
 	)
+}
+
+// fetchAllSessions fetches sessions from all executors.
+func (m sessionsModel) fetchAllSessions() tea.Cmd {
+	return func() tea.Msg {
+		var allLines []tmux.SessionLine
+		for _, exec := range m.executors {
+			lines, err := tmux.ListSessionsRawWithExecutor(exec)
+			if err != nil {
+				continue // Skip unreachable hosts
+			}
+			allLines = append(allLines, lines...)
+		}
+		return sessionsLoadedMsg{lines: allLines, err: nil}
+	}
 }
 
 type sessionsLoadedMsg struct {
@@ -214,7 +256,9 @@ func (m sessionsModel) filterHistory(entries []history.Entry) []history.Entry {
 func (m sessionsModel) selectCurrent() (tea.Model, tea.Cmd) {
 	if m.selectedIndex < len(m.lines) {
 		// Active session
-		m.attachSession = m.lines[m.selectedIndex].Name
+		line := m.lines[m.selectedIndex]
+		m.attachSession = line.Name
+		m.selectedHost = line.Host
 		m.isHistorySelection = false
 	} else {
 		// History entry
@@ -224,6 +268,7 @@ func (m sessionsModel) selectCurrent() (tea.Model, tea.Cmd) {
 			m.attachSession = entry.SessionName
 			m.reviveDir = entry.WorkingDirectory
 			m.isHistorySelection = true
+			m.selectedHost = "" // History is always local
 		}
 	}
 	return m, tea.Quit
@@ -250,23 +295,79 @@ func (m sessionsModel) View() string {
 		sections = append(sections, err)
 	}
 
-	// Active sessions section
+	// Active sessions section - group by host if remotes exist
 	sectionHeader := lipgloss.NewStyle().Bold(true).Foreground(secondaryColor)
+
+	hasRemote := false
+	for _, line := range m.lines {
+		if line.Host != "" {
+			hasRemote = true
+			break
+		}
+	}
+
 	if len(m.lines) > 0 {
-		sections = append(sections, sectionHeader.Render("Active"))
-		for i, line := range m.lines {
-			row := "  " + line.Line
-			memSummary := m.memorySummary(line.Name)
-			if memSummary != "" {
-				row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
+		if hasRemote {
+			// Group by host
+			type hostGroup struct {
+				host  string
+				lines []tmux.SessionLine
+				start int // global index start
 			}
-			if i == m.selectedIndex {
-				row = selectedStyle.Render("> " + line.Line)
+			var groups []hostGroup
+			groupMap := make(map[string]*hostGroup)
+			idx := 0
+			for _, line := range m.lines {
+				h := line.Host
+				if g, ok := groupMap[h]; ok {
+					g.lines = append(g.lines, line)
+				} else {
+					g := &hostGroup{host: h, start: idx}
+					g.lines = append(g.lines, line)
+					groupMap[h] = g
+					groups = append(groups, *g)
+				}
+				idx++
+			}
+			// Render each group
+			// Rebuild groups since we need to recalculate after map mutation
+			currentIdx := 0
+			for _, g := range groups {
+				hostLabel := "Active (local)"
+				if g.host != "" {
+					hostLabel = "Active @ " + g.host
+				}
+				sections = append(sections, sectionHeader.Render(hostLabel))
+				for _, line := range groupMap[g.host].lines {
+					var row string
+					memSummary := m.memorySummary(line.Name)
+					if currentIdx == m.selectedIndex {
+						row = selectedStyle.Render("> ") + formatSessionLine(line.Line, selectedStyle)
+					} else {
+						row = "  " + formatSessionLine(line.Line, lipgloss.NewStyle())
+					}
+					if memSummary != "" {
+						row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
+					}
+					sections = append(sections, row)
+					currentIdx++
+				}
+			}
+		} else {
+			sections = append(sections, sectionHeader.Render("Active"))
+			for i, line := range m.lines {
+				var row string
+				memSummary := m.memorySummary(line.Name)
+				if i == m.selectedIndex {
+					row = selectedStyle.Render("> ") + formatSessionLine(line.Line, selectedStyle)
+				} else {
+					row = "  " + formatSessionLine(line.Line, lipgloss.NewStyle())
+				}
 				if memSummary != "" {
 					row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
 				}
+				sections = append(sections, row)
 			}
-			sections = append(sections, row)
 		}
 	} else {
 		sections = append(sections, sectionHeader.Render("Active"))
@@ -282,9 +383,13 @@ func (m sessionsModel) View() string {
 			ago := sessionsTimeAgo(entry.LastUsedAt)
 			meta := lipgloss.NewStyle().Foreground(dimColor).Render("(" + ago + ")")
 			dir := lipgloss.NewStyle().Foreground(dimColor).Render(entry.WorkingDirectory)
-			row := fmt.Sprintf("  %s  %s  %s", entry.Name, meta, dir)
+			var row string
 			if globalIdx == m.selectedIndex {
-				row = selectedStyle.Render(fmt.Sprintf("> %s  %s  %s", entry.Name, meta, dir))
+				formattedName := formatSessionName(entry.Name, selectedStyle)
+				row = selectedStyle.Render("> ") + formattedName + "  " + meta + "  " + dir
+			} else {
+				formattedName := formatSessionName(entry.Name, lipgloss.NewStyle())
+				row = "  " + formattedName + "  " + meta + "  " + dir
 			}
 			sections = append(sections, row)
 		}

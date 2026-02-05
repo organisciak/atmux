@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -407,19 +406,24 @@ func (m landingModel) renderResumeSection() string {
 	}
 
 	sessionExists := m.sessionExists()
-	var actionText string
+	var actionLabel string
 	if sessionExists {
-		actionText = fmt.Sprintf("Resume session: %s", m.sessionName)
+		actionLabel = "Resume session: "
 	} else {
-		actionText = fmt.Sprintf("Start session here: %s", m.sessionName)
+		actionLabel = "Start session here: "
 	}
 
-	style := lipgloss.NewStyle().Foreground(primaryColor)
+	// Build style for the label part
+	labelStyle := lipgloss.NewStyle().Foreground(primaryColor)
+	nameStyle := lipgloss.NewStyle().Foreground(primaryColor)
 	if m.focusedSection == sectionResume {
-		style = style.Bold(true).Inherit(selectedStyle)
+		labelStyle = labelStyle.Bold(true).Inherit(selectedStyle)
+		nameStyle = nameStyle.Bold(true).Inherit(selectedStyle)
 	}
 
-	content = style.Render(prefix + actionText)
+	// Format session name with dimmed prefix, styled rest
+	formattedName := formatSessionName(m.sessionName, nameStyle)
+	content = labelStyle.Render(prefix+actionLabel) + formattedName
 
 	boxStyle := borderStyle.Width(m.width-4).Padding(0, 1)
 	if m.focusedSection == sectionResume {
@@ -450,20 +454,22 @@ func (m landingModel) renderSessionsSection() string {
 	} else {
 		for i, session := range m.sessions {
 			prefix := "    "
-			style := lipgloss.NewStyle()
+			prefixStyle := lipgloss.NewStyle()
+			lineStyle := lipgloss.NewStyle()
 
 			if m.focusedSection == sectionSessions && i == m.selectedIndex {
 				prefix = "  > "
-				style = style.Bold(true).Inherit(selectedStyle)
+				prefixStyle = prefixStyle.Bold(true).Inherit(selectedStyle)
+				lineStyle = lineStyle.Bold(true).Inherit(selectedStyle)
 			}
 
-			// Format session info
-			info := session.Line
-			if strings.Contains(info, "(attached)") {
-				style = style.Foreground(activeColor)
+			// Format session info with dimmed agent-/atmux- prefix
+			if strings.Contains(session.Line, "(attached)") {
+				lineStyle = lineStyle.Foreground(activeColor)
 			}
 
-			rows = append(rows, style.Render(prefix+info))
+			formattedLine := formatSessionLine(session.Line, lineStyle)
+			rows = append(rows, prefixStyle.Render(prefix)+formattedLine)
 		}
 	}
 
