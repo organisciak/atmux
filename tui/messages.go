@@ -35,3 +35,10 @@ type AttachMsg struct {
 type ErrorMsg struct {
 	Err error
 }
+
+// KillCompletedMsg is sent after a kill operation completes
+type KillCompletedMsg struct {
+	NodeType string
+	Target   string
+	Err      error
+}

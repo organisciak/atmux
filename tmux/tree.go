@@ -310,6 +310,23 @@ func SendEscape(target string) error {
 	return exec.Command("tmux", "send-keys", "-t", target, "Escape").Run()
 }
 
+// KillTarget kills a session, window, or pane by target.
+// For sessions: target is the session name
+// For windows: target is session:window_index
+// For panes: target is session:window_index.pane_index
+func KillTarget(nodeType, target string) error {
+	switch nodeType {
+	case "session":
+		return exec.Command("tmux", "kill-session", "-t", target).Run()
+	case "window":
+		return exec.Command("tmux", "kill-window", "-t", target).Run()
+	case "pane":
+		return exec.Command("tmux", "kill-pane", "-t", target).Run()
+	default:
+		return nil
+	}
+}
+
 // SwitchToTarget switches the client to the specified session/window/pane target.
 // This is equivalent to what tmux choose-tree does when you select a target.
 func SwitchToTarget(target string) error {
