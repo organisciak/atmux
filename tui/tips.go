@@ -43,12 +43,16 @@ var tips = []string{
 var tipStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("238"))
 
+// tipLabelStyle is slightly brighter than the tip text for the "Tip:" prefix
+var tipLabelStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("243"))
+
 // GetRandomTip returns a random tip string
 func GetRandomTip() string {
 	return tips[rand.Intn(len(tips))]
 }
 
-// RenderTip returns a styled tip string
+// RenderTip returns a styled tip string with a "Tip: " prefix
 func RenderTip() string {
-	return tipStyle.Render(GetRandomTip())
+	return tipLabelStyle.Render("Tip: ") + tipStyle.Render(GetRandomTip())
 }
