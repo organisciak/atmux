@@ -151,6 +151,10 @@ func runLandingPage(session *tmux.Session, workingDir string) error {
 			saveHistory(filepath.Base(sessionPath), sessionPath, result.Target)
 		}
 		return tmux.AttachToSession(result.Target)
+	case "revive":
+		// Revival from history - create session in the saved working directory
+		histSession := tmux.NewSession(result.WorkingDir)
+		return runDirectAttach(histSession, result.WorkingDir)
 	default:
 		// User quit without action
 		return nil
