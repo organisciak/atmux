@@ -93,6 +93,20 @@ type landingModel struct {
 	historyError    error
 	settingsChanged bool
 	clickZones      []clickZone // Clickable areas calculated during render
+	confirmKill     bool        // Whether kill confirmation is active
+	killSessionName string      // Session name pending kill confirmation
+}
+
+// landingKillMsg is returned after attempting to kill a session.
+type landingKillMsg struct {
+	name string
+	err  error
+}
+
+// landingHistoryDeletedMsg is returned after attempting to delete a history entry.
+type landingHistoryDeletedMsg struct {
+	id  int64
+	err error
 }
 
 func newLandingModel(sessionName string) landingModel {
@@ -140,6 +154,21 @@ type landingHistoryLoadedMsg struct {
 }
 
 func (m landingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle kill confirmation if active
+	if m.confirmKill {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "y", "Y":
+				m.confirmKill = false
+				return m, m.killSelectedSession()
+			case "n", "N", "esc":
+				m.confirmKill = false
+				return m, nil
+			}
+			return m, nil // Ignore other keys while confirmation is shown
+		}
+	}
+
 	switch msg := msg.(type) {
 	case sessionsLoadedMsg:
 		m.sessions = msg.lines
@@ -153,6 +182,33 @@ func (m landingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.recentSessions = msg.entries
 			m.filterRecentSessions()
+		}
+		m.calculateClickZones()
+		return m, nil
+
+	case landingKillMsg:
+		if msg.err != nil {
+			m.lastError = msg.err
+			return m, nil
+		}
+		// Refresh sessions list after killing
+		return m, func() tea.Msg {
+			lines, err := tmux.ListSessionsRaw()
+			return sessionsLoadedMsg{lines: lines, err: err}
+		}
+
+	case landingHistoryDeletedMsg:
+		if msg.err != nil {
+			m.historyError = msg.err
+			return m, nil
+		}
+		m.recentSessions = removeHistoryEntry(m.recentSessions, msg.id)
+		// Adjust selection index if needed
+		if m.selectedIndex >= m.visibleRecentCount() {
+			m.selectedIndex = m.visibleRecentCount() - 1
+			if m.selectedIndex < 0 {
+				m.selectedIndex = 0
+			}
 		}
 		m.calculateClickZones()
 		return m, nil
@@ -243,8 +299,50 @@ func (m landingModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.toggleOption(m.selectedIndex)
 		}
 		return m, nil
+
+	case "x", "delete":
+		switch m.focusedSection {
+		case sectionSessions:
+			if m.selectedIndex >= 0 && m.selectedIndex < len(m.sessions) {
+				m.confirmKill = true
+				m.killSessionName = m.sessions[m.selectedIndex].Name
+			}
+			return m, nil
+		case sectionRecent:
+			// Only delete if a session entry is selected (not the footer)
+			if m.selectedIndex >= 0 && m.selectedIndex < m.visibleRecentCount() {
+				return m, m.deleteSelectedRecentEntry()
+			}
+			return m, nil
+		}
+		return m, nil
 	}
 	return m, nil
+}
+
+// killSelectedSession sends a command to kill the session stored in killSessionName.
+func (m landingModel) killSelectedSession() tea.Cmd {
+	name := m.killSessionName
+	return func() tea.Msg {
+		err := tmux.KillSession(name)
+		return landingKillMsg{name: name, err: err}
+	}
+}
+
+// deleteSelectedRecentEntry deletes the currently selected recent history entry.
+func (m landingModel) deleteSelectedRecentEntry() tea.Cmd {
+	if m.selectedIndex < 0 || m.selectedIndex >= len(m.recentSessions) {
+		return nil
+	}
+	entry := m.recentSessions[m.selectedIndex]
+	return func() tea.Msg {
+		store, err := history.Open()
+		if err != nil {
+			return landingHistoryDeletedMsg{id: entry.ID, err: err}
+		}
+		defer store.Close()
+		return landingHistoryDeletedMsg{id: entry.ID, err: store.DeleteEntry(entry.ID)}
+	}
 }
 
 func (m landingModel) moveUp() (tea.Model, tea.Cmd) {
@@ -506,9 +604,20 @@ func (m landingModel) View() string {
 	optionsSection := m.renderOptionsSection()
 	sections = append(sections, optionsSection)
 
-	// Status bar
-	statusBar := m.renderStatusBar()
-	sections = append(sections, statusBar)
+	// Status bar (or kill confirmation)
+	if m.confirmKill {
+		confirmStyle := lipgloss.NewStyle().
+			Foreground(errorColor).
+			Bold(true).
+			Width(m.width).
+			Align(lipgloss.Center).
+			Padding(1, 0)
+		sections = append(sections, confirmStyle.Render(
+			fmt.Sprintf("Kill session '%s'? (y/n)", m.killSessionName)))
+	} else {
+		statusBar := m.renderStatusBar()
+		sections = append(sections, statusBar)
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
@@ -826,6 +935,18 @@ func (m landingModel) renderStatusBar() string {
 		"Enter select",
 		"Space toggle",
 		"q quit",
+	}
+
+	// Add context-specific hints
+	switch m.focusedSection {
+	case sectionSessions:
+		if len(m.sessions) > 0 {
+			hints = append(hints, "x kill")
+		}
+	case sectionRecent:
+		if len(m.recentSessions) > 0 {
+			hints = append(hints, "x remove")
+		}
 	}
 
 	hintStyle := lipgloss.NewStyle().Foreground(dimColor)
