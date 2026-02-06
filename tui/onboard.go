@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,8 +14,10 @@ import (
 
 // OnboardResult contains the outcome of the onboard interaction.
 type OnboardResult struct {
-	Completed bool
-	Agents    []config.AgentConfig
+	Completed     bool
+	Agents        []config.AgentConfig
+	KeybindAdded  bool
+	KeybindError  string
 }
 
 // RunOnboard runs the interactive onboard TUI.
@@ -26,8 +30,10 @@ func RunOnboard() (*OnboardResult, error) {
 	}
 	if model, ok := finalModel.(onboardModel); ok {
 		return &OnboardResult{
-			Completed: model.completed,
-			Agents:    model.buildAgents(),
+			Completed:    model.completed,
+			Agents:       model.buildAgents(),
+			KeybindAdded: model.keybindAdded,
+			KeybindError: model.keybindError,
 		}, nil
 	}
 	return &OnboardResult{}, nil
@@ -42,12 +48,14 @@ type agentChoice struct {
 }
 
 type onboardModel struct {
-	width      int
-	height     int
-	step       int // 0=welcome, 1=agent selection, 2=flags, 3=confirm
-	cursor     int
-	agents     []agentChoice
-	completed  bool
+	width        int
+	height       int
+	step         int // 0=welcome, 1=agent selection, 2=flags, 3=confirm, 4=keybinding
+	cursor       int
+	agents       []agentChoice
+	completed    bool
+	keybindAdded bool
+	keybindError string
 }
 
 func newOnboardModel() onboardModel {
@@ -131,6 +139,8 @@ func (m onboardModel) maxCursor() int {
 		return count // each enabled agent has a YOLO toggle + Continue
 	case 3: // Confirm
 		return 1 // Save and Continue buttons
+	case 4: // Keybind
+		return 1 // Yes and No buttons
 	default:
 		return 0
 	}
@@ -173,6 +183,24 @@ func (m onboardModel) handleEnter() (tea.Model, tea.Cmd) {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save config: %v\n", err)
 			}
 			m.completed = true
+			// Move to keybinding step
+			m.step = 4
+			m.cursor = 0
+			return m, nil
+		}
+		// Skip - just go to keybinding step anyway
+		m.step = 4
+		m.cursor = 0
+		return m, nil
+
+	case 4: // Keybind
+		if m.cursor == 0 {
+			// Yes - add keybinding
+			if err := m.addKeybinding(); err != nil {
+				m.keybindError = err.Error()
+			} else {
+				m.keybindAdded = true
+			}
 		}
 		return m, tea.Quit
 	}
@@ -279,6 +307,8 @@ func (m onboardModel) View() string {
 		return m.viewFlags()
 	case 3:
 		return m.viewConfirm()
+	case 4:
+		return m.viewKeybind()
 	default:
 		return ""
 	}
@@ -436,10 +466,10 @@ func (m onboardModel) viewConfirm() string {
 	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("  "+path))
 	lines = append(lines, "")
 
-	saveBtn := "  Save and Exit"
+	saveBtn := "  Save and Continue"
 	skipBtn := "  Skip (don't save)"
 	if m.cursor == 0 {
-		saveBtn = selectedStyle.Render("> Save and Exit")
+		saveBtn = selectedStyle.Render("> Save and Continue")
 	} else {
 		skipBtn = selectedStyle.Render("> Skip (don't save)")
 	}
@@ -450,4 +480,102 @@ func (m onboardModel) viewConfirm() string {
 	return lipgloss.Place(m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
 		boxStyle.Render(content))
+}
+
+func (m onboardModel) viewKeybind() string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
+	codeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(primaryColor).
+		Padding(1, 2)
+
+	var lines []string
+	lines = append(lines, titleStyle.Render("Add tmux Keybinding?"))
+	lines = append(lines, "")
+	lines = append(lines, "Would you like to add a tmux keybinding for quick access?")
+	lines = append(lines, "")
+	lines = append(lines, "This will add to ~/.tmux.conf:")
+	lines = append(lines, "  "+codeStyle.Render("bind-key S run-shell \"atmux browse\""))
+	lines = append(lines, "")
+	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("Press prefix + S to open the session browser."))
+	lines = append(lines, "")
+
+	yesBtn := "  Yes, add keybinding"
+	noBtn := "  No, skip"
+	if m.cursor == 0 {
+		yesBtn = selectedStyle.Render("> Yes, add keybinding")
+	} else {
+		noBtn = selectedStyle.Render("> No, skip")
+	}
+	lines = append(lines, yesBtn)
+	lines = append(lines, noBtn)
+
+	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
+	return lipgloss.Place(m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		boxStyle.Render(content))
+}
+
+// addKeybinding adds the tmux keybinding to ~/.tmux.conf
+// This reuses the logic from cmd/keybind.go
+func (m *onboardModel) addKeybinding() error {
+	// Get tmux config path
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("could not determine home directory: %w", err)
+	}
+	tmuxConfPath := filepath.Join(home, ".tmux.conf")
+
+	// Build the binding line (default: prefix + S -> atmux browse)
+	keybindKey := "S"
+	keybindCommand := "browse"
+	bindingLine := fmt.Sprintf("bind-key %s run-shell \"atmux %s\"", keybindKey, keybindCommand)
+	commentLine := "# atmux: open session browser popup"
+	fullBinding := fmt.Sprintf("\n%s\n%s\n", commentLine, bindingLine)
+
+	// Read existing config (if any)
+	existingContent := ""
+	if _, err := os.Stat(tmuxConfPath); err == nil {
+		content, err := os.ReadFile(tmuxConfPath)
+		if err != nil {
+			return fmt.Errorf("could not read %s: %w", tmuxConfPath, err)
+		}
+		existingContent = string(content)
+	}
+
+	// Check if exact binding already exists
+	if strings.Contains(existingContent, bindingLine) {
+		// Already exists, nothing to do
+		return nil
+	}
+
+	// Check for duplicate bindings (warn but proceed in onboard)
+	if isDuplicate, _ := findDuplicateKeybinding(existingContent, keybindKey); isDuplicate {
+		// In onboard flow, we proceed anyway (user explicitly chose to add)
+	}
+
+	// Append to file
+	f, err := os.OpenFile(tmuxConfPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("could not open %s for writing: %w", tmuxConfPath, err)
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(fullBinding); err != nil {
+		return fmt.Errorf("could not write to %s: %w", tmuxConfPath, err)
+	}
+
+	return nil
+}
+
+// findDuplicateKeybinding checks if the key is already bound in the config
+func findDuplicateKeybinding(content, key string) (bool, string) {
+	// Match bind-key or bind followed by the key
+	pattern := regexp.MustCompile(`(?m)^\s*bind(?:-key)?\s+` + regexp.QuoteMeta(key) + `\s+.*$`)
+	match := pattern.FindString(content)
+	if match != "" {
+		return true, strings.TrimSpace(match)
+	}
+	return false, ""
 }

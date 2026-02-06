@@ -30,10 +30,22 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if result.Completed {
-			fmt.Println("\nConfiguration saved! Run 'atmux' to start a session.")
+			fmt.Println("\nConfiguration saved!")
 		} else {
 			fmt.Println("\nSetup skipped. Run 'atmux onboard' to configure later.")
 		}
+
+		// Show keybinding result
+		if result.KeybindAdded {
+			fmt.Println("\nKeybinding added to ~/.tmux.conf!")
+			fmt.Println("To activate, run:")
+			fmt.Println("  tmux source-file ~/.tmux.conf")
+			fmt.Println("\nThen press prefix + S to open the session browser.")
+		} else if result.KeybindError != "" {
+			fmt.Printf("\nWarning: Failed to add keybinding: %s\n", result.KeybindError)
+		}
+
+		fmt.Println("\nRun 'atmux' to start a session.")
 		return nil
 	}
 
