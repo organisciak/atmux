@@ -35,6 +35,11 @@ func (m Model) View() string {
 		return m.renderKillConfirmOverlay(base)
 	}
 
+	// Show context menu overlay if active
+	if m.contextMenu != nil && m.contextMenu.Visible {
+		return m.renderContextMenuOverlay(base)
+	}
+
 	return base
 }
 
@@ -301,6 +306,7 @@ func (m Model) renderHelpOverlay(base string) string {
 		{"a", "Attach to selected session"},
 		{"s", "Send command to selected pane"},
 		{"x or d", "Kill selected session/window/pane"},
+		{"c", "Show context menu"},
 		{"/", "Focus command input"},
 		{"r", "Refresh tree"},
 		{"M", "Toggle mouse support"},
@@ -320,6 +326,7 @@ func (m Model) renderHelpOverlay(base string) string {
 	mouseSection := helpSectionStyle.Render("\nMouse Actions")
 	mouse := []struct{ action, desc string }{
 		{"Click tree node", "Select node"},
+		{"Right-click", "Show context menu"},
 		{"Click [+]/[-]", "Expand/collapse"},
 		{"Double-click", "Attach to session"},
 		{"Click SEND", "Send command to pane"},
@@ -475,4 +482,14 @@ func (m Model) renderKillConfirmOverlay(base string) string {
 	}
 
 	return placeOverlay(x, y, confirmBox, base)
+}
+
+// renderContextMenuOverlay renders the context menu overlay
+func (m Model) renderContextMenuOverlay(base string) string {
+	if m.contextMenu == nil || !m.contextMenu.Visible {
+		return base
+	}
+
+	menuBox := m.contextMenu.Render()
+	return placeOverlay(m.contextMenu.Position.X, m.contextMenu.Position.Y, menuBox, base)
 }

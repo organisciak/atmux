@@ -112,6 +112,27 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ctrlCPrimed = false
 	}
 
+	// Handle context menu keyboard navigation
+	if m.contextMenu != nil && m.contextMenu.Visible {
+		switch msg.String() {
+		case "up", "k":
+			m.contextMenu.MoveSelection(-1)
+			return m, nil
+		case "down", "j":
+			m.contextMenu.MoveSelection(1)
+			return m, nil
+		case "enter", " ":
+			if item := m.contextMenu.SelectedItem(); item != nil && !item.Disabled {
+				return m.executeMenuAction(item.Action)
+			}
+			return m, nil
+		case "esc", "q":
+			m.contextMenu = nil
+			return m, nil
+		}
+		return m, nil // Ignore other keys while menu is open
+	}
+
 	// Handle kill confirmation if active
 	if m.confirmKill {
 		switch msg.String() {
@@ -270,6 +291,10 @@ func (m Model) handleTreeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.killNodeName = node.Name
 			return m, nil
 		}
+	case "c":
+		// Show context menu for selected item (alternative to right-click)
+		m.showContextMenuForSelected()
+		return m, nil
 	}
 	return m, nil
 }
@@ -366,6 +391,22 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Handle context menu interactions
+	if m.contextMenu != nil && m.contextMenu.Visible {
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			// Check if clicking inside the menu
+			if idx, item := m.contextMenu.ItemAtPosition(msg.X, msg.Y); item != nil {
+				m.contextMenu.Selected = idx
+				return m.executeMenuAction(item.Action)
+			}
+			// Click outside menu - dismiss it
+			m.contextMenu = nil
+			return m, nil
+		}
+		// Ignore other mouse events while menu is open
+		return m, nil
+	}
+
 	switch msg.Action {
 	case tea.MouseActionPress:
 		if msg.Button == tea.MouseButtonLeft {
@@ -375,6 +416,9 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m.handleLeftClick(msg.X, msg.Y)
+		}
+		if msg.Button == tea.MouseButtonRight {
+			return m.handleRightClick(msg.X, msg.Y)
 		}
 	case tea.MouseActionMotion:
 		if m.resizing {
@@ -591,4 +635,200 @@ func (m *Model) resizeTreeWidth(x int) {
 	}
 	m.previewPort.Width = m.previewWidth - 2
 	m.previewPort.Height = previewHeight
+}
+
+// handleRightClick handles right mouse clicks to show context menus
+func (m Model) handleRightClick(x, y int) (tea.Model, tea.Cmd) {
+	// Only show context menu when clicking in tree area
+	if x >= m.treeWidth+2 {
+		return m, nil
+	}
+
+	// Calculate which tree item was clicked
+	treeStartY := inputHeight + 2
+	clickedIdx := y - treeStartY
+	if clickedIdx < 0 || clickedIdx >= len(m.flatNodes) {
+		return m, nil
+	}
+
+	node := m.flatNodes[clickedIdx]
+	m.selectedIndex = clickedIdx
+
+	// Create context menu at click position
+	// Adjust position to stay within screen bounds
+	menuX := x
+	menuY := y
+
+	menu := NewContextMenu(node.Type, node.Target, node.Name, menuX, menuY)
+
+	// Adjust menu position to stay within screen bounds
+	menuWidth := menu.Width + 4
+	menuHeight := menu.Height()
+
+	if menuX+menuWidth > m.width {
+		menuX = m.width - menuWidth - 1
+	}
+	if menuX < 0 {
+		menuX = 0
+	}
+	if menuY+menuHeight > m.height {
+		menuY = m.height - menuHeight - 1
+	}
+	if menuY < 0 {
+		menuY = 0
+	}
+
+	menu.Position.X = menuX
+	menu.Position.Y = menuY
+
+	m.contextMenu = menu
+	return m, nil
+}
+
+// showContextMenuForSelected shows a context menu for the currently selected node
+func (m *Model) showContextMenuForSelected() {
+	node := m.selectedNode()
+	if node == nil {
+		return
+	}
+
+	// Position menu near the selected item in the tree
+	treeStartY := inputHeight + 2
+	menuY := treeStartY + m.selectedIndex
+	menuX := node.Level*2 + 5 // Indent based on level
+
+	menu := NewContextMenu(node.Type, node.Target, node.Name, menuX, menuY)
+
+	// Adjust menu position to stay within screen bounds
+	menuWidth := menu.Width + 4
+	menuHeight := menu.Height()
+
+	if menuX+menuWidth > m.width {
+		menuX = m.width - menuWidth - 1
+	}
+	if menuX < 0 {
+		menuX = 0
+	}
+	if menuY+menuHeight > m.height {
+		menuY = m.height - menuHeight - 1
+	}
+	if menuY < 0 {
+		menuY = 0
+	}
+
+	menu.Position.X = menuX
+	menu.Position.Y = menuY
+
+	m.contextMenu = menu
+}
+
+// executeMenuAction executes the action for a menu item
+func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
+	if m.contextMenu == nil {
+		return m, nil
+	}
+
+	target := m.contextMenu.Target
+	nodeType := m.contextMenu.NodeType
+
+	// Close the menu
+	m.contextMenu = nil
+
+	switch action {
+	case MenuActionAttach:
+		// Attach to session
+		session := sessionFromTarget(target)
+		if session != "" {
+			m.attachSession = session
+			return m, tea.Quit
+		}
+
+	case MenuActionAttachPopup:
+		// Attach in popup mode - for now just attach normally
+		session := sessionFromTarget(target)
+		if session != "" {
+			m.attachSession = session
+			return m, tea.Quit
+		}
+
+	case MenuActionNewWindow:
+		// Create new window in session
+		return m, createNewWindow(target)
+
+	case MenuActionRename:
+		// TODO: Implement rename dialog
+		// For now, just show a message
+		return m, nil
+
+	case MenuActionKillSession, MenuActionKillWindow, MenuActionKillPane:
+		// Show kill confirmation
+		node := m.selectedNode()
+		if node != nil {
+			m.confirmKill = true
+			m.killNodeType = nodeType
+			m.killNodeTarget = target
+			m.killNodeName = node.Name
+		}
+		return m, nil
+
+	case MenuActionSelectWindow:
+		// Switch to window
+		return m, switchToTarget(target)
+
+	case MenuActionNewPaneH:
+		// Create horizontal split
+		return m, createNewPane(target, false)
+
+	case MenuActionNewPaneV:
+		// Create vertical split
+		return m, createNewPane(target, true)
+
+	case MenuActionSelectPane:
+		// Switch to pane
+		return m, switchToTarget(target)
+
+	case MenuActionZoomPane:
+		// Toggle zoom on pane
+		return m, toggleZoomPane(target)
+
+	case MenuActionSendKeys:
+		// Focus the input and set target
+		m.focused = FocusInput
+		m.commandInput.Focus()
+		return m, nil
+	}
+
+	return m, nil
+}
+
+// createNewWindow creates a new window in the specified session
+func createNewWindow(sessionTarget string) tea.Cmd {
+	return func() tea.Msg {
+		err := tmux.CreateNewWindow(sessionTarget)
+		return TreeRefreshedMsg{Err: err}
+	}
+}
+
+// createNewPane creates a new pane in the specified window
+func createNewPane(windowTarget string, vertical bool) tea.Cmd {
+	return func() tea.Msg {
+		err := tmux.CreateNewPane(windowTarget, vertical)
+		return TreeRefreshedMsg{Err: err}
+	}
+}
+
+// switchToTarget switches the client to the specified target
+func switchToTarget(target string) tea.Cmd {
+	return func() tea.Msg {
+		err := tmux.SwitchToTarget(target)
+		return CommandSentMsg{Target: target, Command: "switch", Err: err}
+	}
+}
+
+// toggleZoomPane toggles zoom on the specified pane
+func toggleZoomPane(target string) tea.Cmd {
+	return func() tea.Msg {
+		err := tmux.ToggleZoom(target)
+		return CommandSentMsg{Target: target, Command: "zoom", Err: err}
+	}
 }

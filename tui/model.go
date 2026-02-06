@@ -98,6 +98,9 @@ type Model struct {
 	killNodeType   string // Type of node being killed (session/window/pane)
 	killNodeTarget string // Target of node being killed
 	killNodeName   string // Name of node being killed (for display)
+
+	// Context menu state
+	contextMenu *ContextMenu // Active context menu, nil if not showing
 }
 
 // buttonZone tracks a clickable button area

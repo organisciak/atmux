@@ -425,3 +425,23 @@ func SendCommandWithMethod(target, command string, method SendMethod) error {
 		return SendCommandWithMethod(target, command, SendMethodEnterSeparate)
 	}
 }
+
+// CreateNewWindow creates a new window in the specified session
+func CreateNewWindow(sessionTarget string) error {
+	return exec.Command("tmux", "new-window", "-t", sessionTarget).Run()
+}
+
+// CreateNewPane creates a new pane in the specified window/pane target
+// If vertical is true, splits vertically (-v), otherwise horizontally (-h)
+func CreateNewPane(target string, vertical bool) error {
+	splitFlag := "-h"
+	if vertical {
+		splitFlag = "-v"
+	}
+	return exec.Command("tmux", "split-window", splitFlag, "-t", target).Run()
+}
+
+// ToggleZoom toggles the zoom state of the specified pane
+func ToggleZoom(target string) error {
+	return exec.Command("tmux", "resize-pane", "-t", target, "-Z").Run()
+}
