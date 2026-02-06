@@ -80,6 +80,8 @@ type sessionsModel struct {
 	memoryError        error
 	executors          []tmux.TmuxExecutor
 	executorMap        map[string]tmux.TmuxExecutor
+	confirmKill        bool
+	killSessionName    string
 }
 
 func newSessionsModel(executors []tmux.TmuxExecutor) sessionsModel {
@@ -144,7 +146,27 @@ type memoryLoadedMsg struct {
 	err    error
 }
 
+type killSessionMsg struct {
+	sessionName string
+	err         error
+}
+
 func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle kill confirmation if active
+	if m.confirmKill {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "y", "Y":
+				m.confirmKill = false
+				return m, m.killSession(m.killSessionName)
+			case "n", "N", "esc":
+				m.confirmKill = false
+				return m, nil
+			}
+			return m, nil // Ignore other keys while confirmation is shown
+		}
+	}
+
 	switch msg := msg.(type) {
 	case sessionsLoadedMsg:
 		m.lines = msg.lines
@@ -168,6 +190,25 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.historyEntries = removeHistoryEntry(m.historyEntries, msg.id)
 		m.clampSelection()
 		return m, nil
+	case killSessionMsg:
+		if msg.err != nil {
+			m.lastError = msg.err
+			return m, nil
+		}
+		// Refresh sessions and history after killing
+		m.killSessionName = ""
+		return m, tea.Batch(
+			m.fetchAllSessions(),
+			func() tea.Msg {
+				store, err := history.Open()
+				if err != nil {
+					return historyLoadedMsg{err: err}
+				}
+				defer store.Close()
+				entries, err := store.LoadHistory()
+				return historyLoadedMsg{entries: entries, err: err}
+			},
+		)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -190,6 +231,14 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			return m.selectCurrent()
 		case "x", "delete", "backspace":
+			if m.selectedIndex < len(m.lines) {
+				// Active session: prompt to kill
+				line := m.lines[m.selectedIndex]
+				m.confirmKill = true
+				m.killSessionName = line.Name
+				return m, nil
+			}
+			// History entry: delete from history
 			if cmd := m.deleteSelectedHistoryEntry(); cmd != nil {
 				return m, cmd
 			}
@@ -280,9 +329,34 @@ func (m sessionsModel) View() string {
 	}
 
 	title := lipgloss.NewStyle().Bold(true).Render("Sessions")
-	subtitle := lipgloss.NewStyle().Foreground(dimColor).Render("↑↓ select, Enter attach, x remove, q quit")
+	xHint := "x remove"
+	if m.selectedIndex < len(m.lines) {
+		xHint = "x kill"
+	}
+	subtitle := lipgloss.NewStyle().Foreground(dimColor).Render("↑↓ select, Enter attach, " + xHint + ", q quit")
 
 	var sections []string
+
+	// Show kill confirmation if active
+	if m.confirmKill {
+		sections = append(sections, title, subtitle, "")
+		warning := lipgloss.NewStyle().
+			Foreground(errorColor).
+			Bold(true).
+			Render(fmt.Sprintf("Kill session '%s'? (y/n)", m.killSessionName))
+		// Check if this is the currently attached session
+		for _, line := range m.lines {
+			if line.Name == m.killSessionName && strings.Contains(line.Line, "(attached)") {
+				warning += "\n" + lipgloss.NewStyle().
+					Foreground(errorColor).
+					Render("WARNING: This is the currently attached session!")
+				break
+			}
+		}
+		sections = append(sections, warning)
+		return lipgloss.JoinVertical(lipgloss.Left, sections...)
+	}
+
 	sections = append(sections, title, subtitle, "")
 
 	// Error display
@@ -443,6 +517,13 @@ func (m sessionsModel) deleteSelectedHistoryEntry() tea.Cmd {
 		}
 		defer store.Close()
 		return historyDeletedMsg{id: entry.ID, err: store.DeleteEntry(entry.ID)}
+	}
+}
+
+func (m sessionsModel) killSession(name string) tea.Cmd {
+	return func() tea.Msg {
+		err := tmux.KillSession(name)
+		return killSessionMsg{sessionName: name, err: err}
 	}
 }
 
