@@ -38,13 +38,14 @@ func TestRenderTreeAddsEscapeButton(t *testing.T) {
 	m.rebuildFlatNodes()
 	m.calculateButtonZones()
 
-	// Expected: 1 help + 1 ATT (session) + 1 ATT (window) + 1 SEND + 1 ESC + 1 ATT (pane) = 6 zones
-	if len(m.buttonZones) != 6 {
+	// Expected: 1 help (top) + 1 ATT (session) + 1 ATT (window) + 1 SEND + 1 ESC + 1 ATT (pane) +
+	//           5 status bar hints (refresh, attach, killhint, focusinput, help) = 11 zones
+	if len(m.buttonZones) != 11 {
 		types := make([]string, 0, len(m.flatNodes))
 		for _, node := range m.flatNodes {
 			types = append(types, node.Type)
 		}
-		t.Fatalf("expected 6 button zones, got %d (nodes=%v)", len(m.buttonZones), types)
+		t.Fatalf("expected 11 button zones, got %d (nodes=%v)", len(m.buttonZones), types)
 	}
 
 	actions := map[string]int{}
@@ -57,7 +58,8 @@ func TestRenderTreeAddsEscapeButton(t *testing.T) {
 		}
 	}
 
-	if actions[buttonActionSend] != 1 || actions[buttonActionEscape] != 1 || actions[buttonActionAttach] != 3 || actions[buttonActionHelp] != 1 {
-		t.Fatalf("expected send, escape, attach, and help buttons, got %+v", actions)
+	if actions[buttonActionSend] != 1 || actions[buttonActionEscape] != 1 || actions[buttonActionAttach] != 4 || actions[buttonActionHelp] != 2 ||
+		actions[buttonActionRefresh] != 1 || actions[buttonActionKillHint] != 1 || actions[buttonActionFocusInput] != 1 {
+		t.Fatalf("expected send=1, escape=1, attach=4, help=2, refresh=1, killhint=1, focusinput=1, got %+v", actions)
 	}
 }

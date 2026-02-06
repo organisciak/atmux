@@ -487,6 +487,20 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 		case buttonActionHelp:
 			m.showHelp = !m.showHelp
 			return m, nil
+		case buttonActionRefresh:
+			return m, fetchTree
+		case buttonActionKillHint:
+			if node := m.selectedNode(); node != nil {
+				m.confirmKill = true
+				m.killNodeType = node.Type
+				m.killNodeTarget = node.Target
+				m.killNodeName = node.Name
+			}
+			return m, nil
+		case buttonActionFocusInput:
+			m.focused = FocusInput
+			m.commandInput.Focus()
+			return m, nil
 		}
 	}
 
