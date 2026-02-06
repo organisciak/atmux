@@ -106,14 +106,13 @@ func (m *Model) renderTree() string {
 		useFormattedName := node.Type == "session"
 
 		// Calculate button widths based on node type
-		attButton := attachButtonStyle.Render("ATT")
 		buttonGap := " "
-		buttonsWidth := lipgloss.Width(attButton)
+		buttonsWidth := 0
 
 		if node.Type == "pane" {
 			sendButton := sendButtonStyle.Render("SEND")
 			escButton := escapeButtonStyle.Render("ESC")
-			buttonsWidth = lipgloss.Width(sendButton) + len(buttonGap) + lipgloss.Width(escButton) + len(buttonGap) + lipgloss.Width(attButton)
+			buttonsWidth = lipgloss.Width(sendButton) + len(buttonGap) + lipgloss.Width(escButton)
 		}
 
 		maxNameLen := m.treeWidth - (node.Level * 2) - 4 - buttonsWidth // indent + icon + spacing + buttons
@@ -129,13 +128,11 @@ func (m *Model) renderTree() string {
 		}
 		line := indent + icon + " " + styledName
 
-		// Add buttons based on node type
+		// Add buttons for pane nodes only (SEND and ESC)
 		if node.Type == "pane" {
-			// Panes get SEND, ESC, and ATT buttons
 			sendButton := sendButtonStyle.Render("SEND")
 			escButton := escapeButtonStyle.Render("ESC")
-			attButton := attachButtonStyle.Render("ATT")
-			buttonsWidth := lipgloss.Width(sendButton) + len(buttonGap) + lipgloss.Width(escButton) + len(buttonGap) + lipgloss.Width(attButton)
+			buttonsWidth := lipgloss.Width(sendButton) + len(buttonGap) + lipgloss.Width(escButton)
 
 			// Pad line to push buttons to the right
 			lineLen := lipgloss.Width(line)
@@ -143,20 +140,9 @@ func (m *Model) renderTree() string {
 			if padding < 1 {
 				padding = 1
 			}
-			line = line + strings.Repeat(" ", padding) + sendButton + buttonGap + escButton + buttonGap + attButton
-		} else {
-			// Sessions and windows get only ATT button
-			attButton := attachButtonStyle.Render("ATT")
-			buttonsWidth := lipgloss.Width(attButton)
-
-			// Pad line to push button to the right
-			lineLen := lipgloss.Width(line)
-			padding := m.treeWidth - lineLen - buttonsWidth
-			if padding < 1 {
-				padding = 1
-			}
-			line = line + strings.Repeat(" ", padding) + attButton
+			line = line + strings.Repeat(" ", padding) + sendButton + buttonGap + escButton
 		}
+		// Sessions and windows no longer show ATT button - use tips strip instead
 
 		lines = append(lines, line)
 	}
@@ -338,7 +324,6 @@ func (m Model) renderHelpOverlay(base string) string {
 		{"Double-click", "Attach to session"},
 		{"Click SEND", "Send command to pane"},
 		{"Click ESC", "Send Escape to pane"},
-		{"Click ATT", "Attach to session"},
 		{"Drag divider", "Resize panels"},
 		{"Scroll", "Scroll preview pane"},
 	}
@@ -354,7 +339,6 @@ func (m Model) renderHelpOverlay(base string) string {
 	buttons := []struct{ btn, desc string }{
 		{"SEND", "Send command input to this pane"},
 		{"ESC", "Send Escape key to this pane"},
-		{"ATT", "Attach/switch to this session"},
 	}
 
 	var buttonLines []string
