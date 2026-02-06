@@ -48,6 +48,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rebuildFlatNodes()
 			m.calculateButtonZones()
 			m.lastError = nil
+			// Re-filter recent sessions against active tree
+			m.filterRecentSessions()
 
 			// Fetch preview for selected node
 			if node := m.selectedNode(); node != nil && node.Type == "pane" {
@@ -59,6 +61,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tickCmd(m.options.RefreshInterval))
 		}
 		return m, tea.Batch(cmds...)
+
+	case RecentSessionsMsg:
+		if msg.Err == nil {
+			m.recentSessions = msg.Entries
+			m.filterRecentSessions()
+			// Clamp selection
+			if m.recentSelectedIndex >= len(m.recentSessions) {
+				m.recentSelectedIndex = len(m.recentSessions) - 1
+			}
+			if m.recentSelectedIndex < 0 {
+				m.recentSelectedIndex = 0
+			}
+		}
+		return m, nil
+
+	case RecentDeletedMsg:
+		if msg.Err == nil {
+			// Remove the deleted entry from the list
+			for i, e := range m.recentSessions {
+				if e.ID == msg.ID {
+					m.recentSessions = append(m.recentSessions[:i], m.recentSessions[i+1:]...)
+					break
+				}
+			}
+			// Clamp selection
+			if m.recentSelectedIndex >= len(m.recentSessions) {
+				m.recentSelectedIndex = len(m.recentSessions) - 1
+			}
+			if m.recentSelectedIndex < 0 {
+				m.recentSelectedIndex = 0
+			}
+			// If no more recent sessions and focus was on recent, move back to tree
+			if len(m.recentSessions) == 0 && m.focusRecent {
+				m.focusRecent = false
+			}
+		}
+		return m, nil
 
 	case PreviewUpdatedMsg:
 		if msg.Err == nil && msg.Target == m.previewTarget {
@@ -79,8 +118,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case TickMsg:
-		// Auto-refresh tree
+		// Auto-refresh tree and recent sessions
 		cmds = append(cmds, fetchTree)
+		cmds = append(cmds, fetchRecentSessions)
 		// Also refresh preview if we have a selected pane
 		if node := m.selectedNode(); node != nil && node.Type == "pane" {
 			cmds = append(cmds, fetchPreview(node.Target))
@@ -91,8 +131,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			m.lastError = msg.Err
 		} else {
-			// Successfully killed, refresh tree
-			return m, fetchTree
+			// Successfully killed, refresh tree and recent sessions
+			return m, tea.Batch(fetchTree, fetchRecentSessions)
 		}
 		return m, nil
 	}
@@ -233,7 +273,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "r":
 		if m.focused != FocusInput {
-			return m, fetchTree
+			return m, tea.Batch(fetchTree, fetchRecentSessions)
 		}
 	case "m":
 		// Cycle through send methods (debug mode)
@@ -266,12 +306,21 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleTreeKeys handles keys when tree is focused
 func (m Model) handleTreeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// If focus is on the recent section, handle recent-specific keys
+	if m.focusRecent {
+		return m.handleRecentKeys(msg)
+	}
+
 	switch msg.String() {
 	case "up", "k":
 		m.moveSelection(-1)
 		return m, m.updatePreviewForSelection()
 	case "down", "j":
 		m.moveSelection(1)
+		if m.focusRecent {
+			// Moved into recent section, no preview update needed
+			return m, nil
+		}
 		return m, m.updatePreviewForSelection()
 	case "enter", " ":
 		m.toggleExpand()
@@ -306,6 +355,43 @@ func (m Model) handleTreeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		// Show context menu for selected item (alternative to right-click)
 		m.showContextMenuForSelected()
+		return m, nil
+	}
+	return m, nil
+}
+
+// handleRecentKeys handles keys when the recent section is focused
+func (m Model) handleRecentKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		m.moveSelection(-1)
+		if !m.focusRecent {
+			// Moved back into tree section
+			return m, m.updatePreviewForSelection()
+		}
+		return m, nil
+	case "down", "j":
+		m.moveSelection(1)
+		return m, nil
+	case "enter":
+		// Revive selected recent session (quit with working dir set)
+		if entry := m.selectedRecentEntry(); entry != nil {
+			m.attachSession = entry.SessionName
+			return m, tea.Quit
+		}
+		return m, nil
+	case "x", "d", "delete", "backspace":
+		// Delete selected recent entry from history
+		if entry := m.selectedRecentEntry(); entry != nil {
+			return m, deleteRecentEntry(entry.ID)
+		}
+		return m, nil
+	case "a":
+		// Revive (same as enter for recent entries)
+		if entry := m.selectedRecentEntry(); entry != nil {
+			m.attachSession = entry.SessionName
+			return m, tea.Quit
+		}
 		return m, nil
 	}
 	return m, nil
@@ -522,6 +608,7 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 		treeStartY := inputHeight + 2
 		clickedIdx := y - treeStartY
 		if clickedIdx >= 0 && clickedIdx < len(m.flatNodes) {
+			m.focusRecent = false
 			node := m.flatNodes[clickedIdx]
 			m.selectedIndex = clickedIdx
 			if node.Type == "session" || node.Type == "window" {
@@ -547,6 +634,28 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 			m.lastClickAt = time.Now()
 			return m, m.updatePreviewForSelection()
 		}
+
+		// Check if clicking in the recent section area
+		// Recent section starts at: tree nodes + 1 (empty line) + 1 (header)
+		if len(m.recentSessions) > 0 {
+			recentStartLine := len(m.flatNodes) + 2 // blank line + header
+			recentIdx := clickedIdx - recentStartLine
+			if recentIdx >= 0 && recentIdx < len(m.recentSessions) {
+				m.focusRecent = true
+				m.recentSelectedIndex = recentIdx
+
+				// Double-click to revive
+				if recentIdx == m.lastClickIdx-10000 && // Use offset to distinguish from tree clicks
+					time.Since(m.lastClickAt) <= doubleClickThreshold {
+					entry := m.recentSessions[recentIdx]
+					m.attachSession = entry.SessionName
+					return m, tea.Quit
+				}
+				m.lastClickIdx = recentIdx + 10000 // Offset to distinguish
+				m.lastClickAt = time.Now()
+				return m, nil
+			}
+		}
 	} else {
 		// Preview is on the right
 		m.focused = FocusPreview
@@ -559,6 +668,7 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 // cycleFocus cycles through focusable components
 func (m *Model) cycleFocus(delta int) {
 	m.commandInput.Blur()
+	m.focusRecent = false // Reset recent focus when cycling panels
 
 	focusOrder := []FocusedComponent{FocusTree, FocusInput, FocusPreview}
 	current := 0

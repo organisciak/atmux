@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/porganisciak/agent-tmux/history"
 	"github.com/porganisciak/agent-tmux/tmux"
 )
 
@@ -109,6 +110,11 @@ type Model struct {
 	// Mobile mode
 	mobileMode       bool // True when using mobile-optimized layout
 	mobileForcedMode bool // True when --mobile flag was passed (prevents auto-switching)
+
+	// Recent sessions (history entries not currently active)
+	recentSessions      []history.Entry
+	recentSelectedIndex int  // Selection index within recent section
+	focusRecent         bool // Whether focus is on recent section vs tree
 }
 
 // buttonZone tracks a clickable button area
@@ -148,6 +154,7 @@ func NewModel(opts Options) Model {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		fetchTree,
+		fetchRecentSessions,
 		tea.SetWindowTitle("atmux browse"),
 	)
 }
@@ -156,6 +163,81 @@ func (m Model) Init() tea.Cmd {
 func fetchTree() tea.Msg {
 	tree, err := tmux.FetchTree()
 	return TreeRefreshedMsg{Tree: tree, Err: err}
+}
+
+// fetchRecentSessions loads history entries for the recent section
+func fetchRecentSessions() tea.Msg {
+	store, err := history.Open()
+	if err != nil {
+		return RecentSessionsMsg{Err: err}
+	}
+	defer store.Close()
+	entries, err := store.LoadHistory()
+	return RecentSessionsMsg{Entries: entries, Err: err}
+}
+
+// filterRecentSessions removes history entries that match active sessions.
+func (m *Model) filterRecentSessions() {
+	if m.tree == nil || m.recentSessions == nil {
+		return
+	}
+	activeNames := make(map[string]bool)
+	for _, sess := range m.tree.Sessions {
+		activeNames[sess.Name] = true
+	}
+	var filtered []history.Entry
+	for _, e := range m.recentSessions {
+		if !activeNames[e.SessionName] {
+			filtered = append(filtered, e)
+		}
+	}
+	m.recentSessions = filtered
+}
+
+// deleteRecentEntry deletes a history entry by ID
+func deleteRecentEntry(id int64) tea.Cmd {
+	return func() tea.Msg {
+		store, err := history.Open()
+		if err != nil {
+			return RecentDeletedMsg{ID: id, Err: err}
+		}
+		defer store.Close()
+		return RecentDeletedMsg{ID: id, Err: store.DeleteEntry(id)}
+	}
+}
+
+// selectedRecentEntry returns the currently selected recent entry, if any.
+func (m *Model) selectedRecentEntry() *history.Entry {
+	if !m.focusRecent || m.recentSelectedIndex < 0 || m.recentSelectedIndex >= len(m.recentSessions) {
+		return nil
+	}
+	e := m.recentSessions[m.recentSelectedIndex]
+	return &e
+}
+
+// maxVisibleRecentEntries returns how many recent entries can be shown
+// given the current tree height and number of tree nodes.
+func (m *Model) maxVisibleRecentEntries() int {
+	if len(m.recentSessions) == 0 {
+		return 0
+	}
+	treeHeight := m.height - inputHeight - statusHeight - 4
+	if treeHeight < 1 {
+		treeHeight = 1
+	}
+	// Tree nodes take up space, plus 2 lines for separator + header
+	nodeCount := len(m.flatNodes)
+	if nodeCount > treeHeight {
+		nodeCount = treeHeight
+	}
+	remaining := treeHeight - nodeCount - 2 // -2 for blank line + header
+	if remaining < 0 {
+		return 0
+	}
+	if remaining > len(m.recentSessions) {
+		return len(m.recentSessions)
+	}
+	return remaining
 }
 
 // fetchPreview fetches pane content
@@ -231,15 +313,50 @@ func (m *Model) toggleExpand() {
 	}
 }
 
-// moveSelection moves selection up or down
+// moveSelection moves selection up or down, transitioning between tree and recent sections.
 func (m *Model) moveSelection(delta int) {
-	m.selectedIndex += delta
-	if m.selectedIndex < 0 {
-		m.selectedIndex = 0
+	maxVisible := m.maxVisibleRecentEntries()
+
+	if m.focusRecent {
+		// Currently in recent section
+		m.recentSelectedIndex += delta
+		if m.recentSelectedIndex < 0 {
+			// Move back up into tree
+			m.focusRecent = false
+			m.recentSelectedIndex = 0
+			m.selectedIndex = len(m.flatNodes) - 1
+			if m.selectedIndex < 0 {
+				m.selectedIndex = 0
+			}
+			return
+		}
+		if m.recentSelectedIndex >= maxVisible {
+			m.recentSelectedIndex = maxVisible - 1
+		}
+		if m.recentSelectedIndex < 0 {
+			m.recentSelectedIndex = 0
+		}
+		return
 	}
-	if m.selectedIndex >= len(m.flatNodes) {
-		m.selectedIndex = len(m.flatNodes) - 1
+
+	// Currently in tree section
+	newIndex := m.selectedIndex + delta
+	if newIndex < 0 {
+		newIndex = 0
 	}
+	if newIndex >= len(m.flatNodes) {
+		// Check if we can move into recent section (only if visible)
+		if maxVisible > 0 && delta > 0 {
+			m.focusRecent = true
+			m.recentSelectedIndex = 0
+			return
+		}
+		newIndex = len(m.flatNodes) - 1
+	}
+	if newIndex < 0 {
+		newIndex = 0
+	}
+	m.selectedIndex = newIndex
 }
 
 // calculateLayout calculates panel widths based on terminal size

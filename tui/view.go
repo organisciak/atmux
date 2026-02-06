@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -82,12 +83,13 @@ func (m *Model) renderTree() string {
 		treeHeight = 1
 	}
 
+	treeNodeLines := 0
 	for i, node := range m.flatNodes {
 		if i >= treeHeight {
 			break
 		}
 
-		selected := i == m.selectedIndex
+		selected := i == m.selectedIndex && !m.focusRecent
 		indent := strings.Repeat("  ", node.Level)
 
 		// Host header nodes get special rendering
@@ -105,6 +107,7 @@ func (m *Model) renderTree() string {
 				}
 			}
 			lines = append(lines, line)
+			treeNodeLines++
 			continue
 		}
 
@@ -155,6 +158,68 @@ func (m *Model) renderTree() string {
 		// Sessions and windows no longer show ATT button - use tips strip instead
 
 		lines = append(lines, line)
+		treeNodeLines++
+	}
+
+	// Render recent sessions section if there's space and entries exist
+	remainingSpace := treeHeight - treeNodeLines
+	// Need at least 3 lines: 1 for header + 1 for separator + 1 for at least one entry
+	if len(m.recentSessions) > 0 && remainingSpace >= 3 {
+		// Empty separator line
+		lines = append(lines, "")
+		remainingSpace--
+
+		// Section header
+		recentHeaderStyle := lipgloss.NewStyle().Foreground(dimColor).Bold(true)
+		header := recentHeaderStyle.Render("Recent")
+		lines = append(lines, header)
+		remainingSpace--
+
+		// Render entries that fit
+		maxEntries := remainingSpace
+		if maxEntries > len(m.recentSessions) {
+			maxEntries = len(m.recentSessions)
+		}
+		for i := 0; i < maxEntries; i++ {
+			entry := m.recentSessions[i]
+			selected := m.focusRecent && i == m.recentSelectedIndex
+
+			// Format: "  sessionname (2h ago)"
+			ago := browseTimeAgo(entry.LastUsedAt)
+			agoStr := lipgloss.NewStyle().Foreground(dimColor).Render(" (" + ago + ")")
+
+			var nameStr string
+			if selected {
+				nameStr = formatSessionName(entry.Name, selectedStyle.Foreground(dimColor))
+			} else {
+				nameStr = formatSessionName(entry.Name, lipgloss.NewStyle().Foreground(dimColor))
+			}
+
+			prefix := "  "
+			if selected {
+				prefix = selectedStyle.Render("> ")
+			}
+
+			line := prefix + nameStr + agoStr
+
+			// Truncate if too wide
+			if lipgloss.Width(line) > m.treeWidth-2 {
+				// Rebuild with shorter name
+				maxNameLen := m.treeWidth - 2 - lipgloss.Width(prefix) - lipgloss.Width(agoStr) - 1
+				name := entry.Name
+				if maxNameLen > 3 && len(name) > maxNameLen {
+					name = name[:maxNameLen-3] + "..."
+				}
+				if selected {
+					nameStr = formatSessionName(name, selectedStyle.Foreground(dimColor))
+				} else {
+					nameStr = formatSessionName(name, lipgloss.NewStyle().Foreground(dimColor))
+				}
+				line = prefix + nameStr + agoStr
+			}
+
+			lines = append(lines, line)
+		}
 	}
 
 	// Pad with empty lines
@@ -283,7 +348,11 @@ func (m Model) renderStatusBar() string {
 	}
 
 	// Selected target
-	if node := m.selectedNode(); node != nil {
+	if m.focusRecent {
+		if entry := m.selectedRecentEntry(); entry != nil {
+			parts = append(parts, statusSelectedStyle.Render(entry.Name))
+		}
+	} else if node := m.selectedNode(); node != nil {
 		parts = append(parts, statusSelectedStyle.Render(node.Target))
 	}
 
@@ -500,6 +569,25 @@ func (m Model) renderKillConfirmOverlay(base string) string {
 	}
 
 	return placeOverlay(x, y, confirmBox, base)
+}
+
+// browseTimeAgo formats a time as a relative string for the browse view.
+func browseTimeAgo(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Hour:
+		m := int(d.Minutes())
+		if m <= 1 {
+			return "just now"
+		}
+		return fmt.Sprintf("%dm ago", m)
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	default:
+		return t.Format("Jan 2")
+	}
 }
 
 // renderContextMenuOverlay renders the context menu overlay
