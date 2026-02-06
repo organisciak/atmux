@@ -204,18 +204,18 @@ func (m *scheduleWizardModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	case "ctrl+c":
 		m.done = true
 		m.cancelled = true
-		return m, nil
+		return *m, nil
 	case "esc":
 		if m.step == WizardStepSchedule {
 			m.done = true
 			m.cancelled = true
-			return m, nil
+			return *m, nil
 		}
 		// Go back a step
 		if m.step > WizardStepSchedule {
 			m.step--
 		}
-		return m, nil
+		return *m, nil
 	}
 
 	// Step-specific handling
@@ -232,7 +232,7 @@ func (m *scheduleWizardModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		return m.handleConfirmStep(msg)
 	}
 
-	return m, nil
+	return *m, nil
 }
 
 func (m *scheduleWizardModel) handleScheduleStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -241,26 +241,26 @@ func (m *scheduleWizardModel) handleScheduleStep(msg tea.KeyMsg) (tea.Model, tea
 		switch msg.String() {
 		case "tab":
 			m.cronFieldIdx = (m.cronFieldIdx + 1) % 5
-			return m, nil
+			return *m, nil
 		case "shift+tab":
 			m.cronFieldIdx = (m.cronFieldIdx + 4) % 5
-			return m, nil
+			return *m, nil
 		case "up":
 			m.incrementCronField(1)
-			return m, nil
+			return *m, nil
 		case "down":
 			m.incrementCronField(-1)
-			return m, nil
+			return *m, nil
 		case "backspace":
 			// Go back to preset selection
 			m.usingCustom = false
 			m.customCron.Blur()
-			return m, nil
+			return *m, nil
 		case "enter":
 			if m.cronValid {
 				m.step = WizardStepTarget
 			}
-			return m, nil
+			return *m, nil
 		default:
 			// Handle typing in current field
 			if len(msg.String()) == 1 {
@@ -275,7 +275,7 @@ func (m *scheduleWizardModel) handleScheduleStep(msg tea.KeyMsg) (tea.Model, tea
 				}
 			}
 		}
-		return m, nil
+		return *m, nil
 	}
 
 	// Preset selection mode
@@ -284,23 +284,23 @@ func (m *scheduleWizardModel) handleScheduleStep(msg tea.KeyMsg) (tea.Model, tea
 		if m.presetIndex > 0 {
 			m.presetIndex--
 		}
-		return m, nil
+		return *m, nil
 	case "down", "j":
 		if m.presetIndex < len(m.presets)-1 {
 			m.presetIndex++
 		}
-		return m, nil
+		return *m, nil
 	case "enter":
 		if m.presets[m.presetIndex].Expr == "" {
 			// Custom selected
 			m.usingCustom = true
 			m.customCron.Focus()
-			return m, textinput.Blink
+			return *m, textinput.Blink
 		}
 		m.step = WizardStepTarget
-		return m, nil
+		return *m, nil
 	}
-	return m, nil
+	return *m, nil
 }
 
 func (m *scheduleWizardModel) handleTargetStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -309,12 +309,12 @@ func (m *scheduleWizardModel) handleTargetStep(msg tea.KeyMsg) (tea.Model, tea.C
 		if m.targetIndex > 0 {
 			m.targetIndex--
 		}
-		return m, nil
+		return *m, nil
 	case "down", "j":
 		if m.targetIndex < len(m.flatNodes)-1 {
 			m.targetIndex++
 		}
-		return m, nil
+		return *m, nil
 	case " ":
 		// Toggle expand
 		if m.targetIndex >= 0 && m.targetIndex < len(m.flatNodes) {
@@ -325,7 +325,7 @@ func (m *scheduleWizardModel) handleTargetStep(msg tea.KeyMsg) (tea.Model, tea.C
 				m.rebuildFlatNodes()
 			}
 		}
-		return m, nil
+		return *m, nil
 	case "enter":
 		if m.targetIndex >= 0 && m.targetIndex < len(m.flatNodes) {
 			node := m.flatNodes[m.targetIndex]
@@ -333,16 +333,16 @@ func (m *scheduleWizardModel) handleTargetStep(msg tea.KeyMsg) (tea.Model, tea.C
 				// Pane selected, move to next step
 				m.step = WizardStepCommand
 				m.commandInput.Focus()
-				return m, textinput.Blink
+				return *m, textinput.Blink
 			}
 			// Toggle expand for non-panes
 			key := node.Type + ":" + node.Target
 			m.targetExpand[key] = !m.targetExpand[key]
 			m.rebuildFlatNodes()
 		}
-		return m, nil
+		return *m, nil
 	}
-	return m, nil
+	return *m, nil
 }
 
 func (m *scheduleWizardModel) handleCommandStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -356,14 +356,14 @@ func (m *scheduleWizardModel) handleCommandStep(msg tea.KeyMsg) (tea.Model, tea.
 			m.nameInput.Blur()
 			m.commandInput.Focus()
 		}
-		return m, textinput.Blink
+		return *m, textinput.Blink
 	case "enter":
 		if m.commandInput.Value() != "" {
 			m.commandInput.Blur()
 			m.nameInput.Blur()
 			m.step = WizardStepPreAction
 		}
-		return m, nil
+		return *m, nil
 	}
 	// Update text input
 	var cmd tea.Cmd
@@ -372,7 +372,7 @@ func (m *scheduleWizardModel) handleCommandStep(msg tea.KeyMsg) (tea.Model, tea.
 	} else {
 		m.nameInput, cmd = m.nameInput.Update(msg)
 	}
-	return m, cmd
+	return *m, cmd
 }
 
 func (m *scheduleWizardModel) handlePreActionStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -381,44 +381,44 @@ func (m *scheduleWizardModel) handlePreActionStep(msg tea.KeyMsg) (tea.Model, te
 		if m.preActionIndex > 0 {
 			m.preActionIndex--
 		}
-		return m, nil
+		return *m, nil
 	case "down", "j":
 		if m.preActionIndex < len(m.preActions)-1 {
 			m.preActionIndex++
 		}
-		return m, nil
+		return *m, nil
 	case "enter":
 		m.step = WizardStepConfirm
-		return m, nil
+		return *m, nil
 	}
-	return m, nil
+	return *m, nil
 }
 
 func (m *scheduleWizardModel) handleConfirmStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "left", "h":
 		m.confirmFocusIdx = 0
-		return m, nil
+		return *m, nil
 	case "right", "l":
 		m.confirmFocusIdx = 1
-		return m, nil
+		return *m, nil
 	case "tab":
 		m.confirmFocusIdx = (m.confirmFocusIdx + 1) % 2
-		return m, nil
+		return *m, nil
 	case "enter":
 		m.done = true
 		m.cancelled = m.confirmFocusIdx == 1
-		return m, nil
+		return *m, nil
 	case "s":
 		m.done = true
 		m.cancelled = false
-		return m, nil
+		return *m, nil
 	case "c":
 		m.done = true
 		m.cancelled = true
-		return m, nil
+		return *m, nil
 	}
-	return m, nil
+	return *m, nil
 }
 
 func (m *scheduleWizardModel) validateCron() {
