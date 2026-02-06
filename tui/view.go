@@ -14,6 +14,11 @@ func (m Model) View() string {
 		return "Loading..."
 	}
 
+	// Use mobile view if in mobile mode
+	if m.mobileMode {
+		return m.renderMobileView()
+	}
+
 	// Build the layout
 	inputBar := m.renderInputBar()
 	mainContent := m.renderMainContent()

@@ -144,6 +144,10 @@ var (
 	inputHeight         = 3
 	statusHeight        = 1
 
+	// Mobile layout constants
+	mobileWidthThreshold = 60 // Auto-switch to mobile if width < this
+	mobileButtonHeight   = 3  // Height for touch-friendly button bar
+
 	// Scheduler-specific styles
 	schedTitleStyle = lipgloss.NewStyle().
 			Bold(true).
