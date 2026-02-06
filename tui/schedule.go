@@ -324,7 +324,7 @@ func (m schedulerModel) View() string {
 
 	// Tips at bottom
 	sections = append(sections, "")
-	sections = append(sections, RenderTip())
+	sections = append(sections, RenderTipForContext(TipScheduler))
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }

@@ -305,7 +305,7 @@ func (m Model) renderStatusBar() string {
 		tip := lipgloss.NewStyle().
 			Width(m.width - 2).
 			Align(lipgloss.Center).
-			Render(RenderTip())
+			Render(RenderTipForContext(TipBrowse))
 		return lipgloss.JoinVertical(lipgloss.Left, statusLine, tip)
 	}
 

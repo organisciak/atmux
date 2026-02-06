@@ -317,7 +317,7 @@ func (m recentsModel) View() string {
 	}
 
 	// Add tip at the bottom
-	sections = append(sections, "", RenderTip())
+	sections = append(sections, "", RenderTipForContext(TipRecents))
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
