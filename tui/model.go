@@ -21,10 +21,13 @@ const (
 )
 
 const (
-	buttonActionSend   = "send"
-	buttonActionEscape = "escape"
-	buttonActionAttach = "attach"
-	buttonActionHelp   = "help"
+	buttonActionSend       = "send"
+	buttonActionEscape     = "escape"
+	buttonActionAttach     = "attach"
+	buttonActionHelp       = "help"
+	buttonActionRefresh    = "refresh"
+	buttonActionKillHint   = "killhint"
+	buttonActionFocusInput = "focusinput"
 )
 
 const doubleClickThreshold = 400 * time.Millisecond
@@ -359,6 +362,43 @@ func (m *Model) calculateButtonZones() {
 				target: node.Target,
 				action: buttonActionAttach,
 			})
+		}
+	}
+
+	// Status bar hint zones (only shown when not in input mode)
+	if m.focused != FocusInput {
+		// Status bar Y: inputHeight + mainContent (treeHeight + 2 borders)
+		statusY := inputHeight + treeHeight + 2
+
+		// Status bar has Padding(0,1), so content starts at x=1
+		// Hints: [r]efresh [a]ttach [x]kill [/]input [?]help
+		// Each hint is rendered individually with spacing between them
+		type hintDef struct {
+			text   string
+			action string
+		}
+		hints := []hintDef{
+			{"[r]efresh", buttonActionRefresh},
+			{"[a]ttach", buttonActionAttach},
+			{"[x]kill", buttonActionKillHint},
+			{"[/]input", buttonActionFocusInput},
+			{"[?]help", buttonActionHelp},
+		}
+
+		xOffset := 1 // statusBarStyle has Padding(0,1)
+		for i, h := range hints {
+			if i > 0 {
+				xOffset++ // space between hints
+			}
+			w := len(h.text)
+			m.buttonZones = append(m.buttonZones, buttonZone{
+				x:      xOffset,
+				y:      statusY,
+				width:  w,
+				height: 1,
+				action: h.action,
+			})
+			xOffset += w
 		}
 	}
 }

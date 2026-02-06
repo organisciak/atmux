@@ -237,11 +237,24 @@ func (m Model) renderStatusBar() string {
 
 	// Keyboard shortcuts hint (only shown when not in input mode)
 	if m.focused != FocusInput {
-		hint := "[r]efresh [a]ttach [x]kill [/]input [?]help"
-		if m.options.DebugMode {
-			hint += " [m]ethod"
+		hintKeyStyle := lipgloss.NewStyle().Foreground(primaryColor).Bold(true)
+		hintTextStyle := lipgloss.NewStyle().Foreground(dimColor)
+		hints := []struct{ key, label string }{
+			{"[r]", "efresh"},
+			{"[a]", "ttach"},
+			{"[x]", "kill"},
+			{"[/]", "input"},
+			{"[?]", "help"},
 		}
-		parts = append(parts, lipgloss.NewStyle().Foreground(dimColor).Render(hint))
+		var hintParts []string
+		for _, h := range hints {
+			hintParts = append(hintParts, hintKeyStyle.Render(h.key)+hintTextStyle.Render(h.label))
+		}
+		hint := strings.Join(hintParts, " ")
+		if m.options.DebugMode {
+			hint += " " + hintKeyStyle.Render("[m]") + hintTextStyle.Render("ethod")
+		}
+		parts = append(parts, hint)
 	} else {
 		parts = append(parts, lipgloss.NewStyle().Foreground(dimColor).Render("[Enter]send [Esc]exit"))
 	}
