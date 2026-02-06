@@ -959,7 +959,7 @@ func (m landingModel) renderStatusBar() string {
 
 	hintsLine := strings.Join(styledHints, separator)
 
-	tip := RenderTip()
+	tip := RenderTipForContext(TipLanding)
 
 	return lipgloss.NewStyle().
 		Width(m.width).
