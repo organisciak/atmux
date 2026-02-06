@@ -15,14 +15,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Route to mobile handler if in mobile mode
+		if m.mobileMode {
+			return m.handleMobileKeyMsg(msg)
+		}
 		return m.handleKeyMsg(msg)
 
 	case tea.MouseMsg:
+		// Route to mobile handler if in mobile mode
+		if m.mobileMode {
+			return m.handleMobileMouseMsg(msg)
+		}
 		return m.handleMouseMsg(msg)
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Auto-detect mobile mode based on terminal width (unless forced via --mobile)
+		if !m.mobileForcedMode {
+			m.mobileMode = shouldUseMobileLayout(m.width, false)
+		}
 		m.calculateLayout()
 		m.calculateButtonZones()
 		m.commandInput.Width = m.width - 20

@@ -14,6 +14,7 @@ var (
 	noPopupMode     bool
 	refreshInterval int
 	debugMode       bool
+	mobileMode      bool
 )
 
 var browseCmd = &cobra.Command{
@@ -64,6 +65,7 @@ func init() {
 	browseCmd.Flags().BoolVar(&noPopupMode, "no-popup", false, "Disable popup mode (default: popup when inside tmux)")
 	browseCmd.Flags().IntVarP(&refreshInterval, "refresh", "r", 2, "Auto-refresh interval in seconds (0 to disable)")
 	browseCmd.Flags().BoolVarP(&debugMode, "debug", "d", false, "Enable debug mode to test different send methods")
+	browseCmd.Flags().BoolVarP(&mobileMode, "mobile", "m", false, "Mobile-optimized view for narrow terminals (auto-detected if width < 60)")
 }
 
 func runBrowse(cmd *cobra.Command, args []string) error {
@@ -83,6 +85,7 @@ func runBrowse(cmd *cobra.Command, args []string) error {
 		RefreshInterval: time.Duration(refreshInterval) * time.Second,
 		PopupMode:       false,
 		DebugMode:       debugMode,
+		MobileMode:      mobileMode,
 	}
 	return tui.Run(opts)
 }

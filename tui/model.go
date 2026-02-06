@@ -34,6 +34,7 @@ type Options struct {
 	RefreshInterval time.Duration
 	PopupMode       bool
 	DebugMode       bool
+	MobileMode      bool // Force mobile layout (auto-detected if width < 60)
 }
 
 // Model is the main TUI state
@@ -98,6 +99,10 @@ type Model struct {
 	killNodeType   string // Type of node being killed (session/window/pane)
 	killNodeTarget string // Target of node being killed
 	killNodeName   string // Name of node being killed (for display)
+
+	// Mobile mode
+	mobileMode       bool // True when using mobile-optimized layout
+	mobileForcedMode bool // True when --mobile flag was passed (prevents auto-switching)
 }
 
 // buttonZone tracks a clickable button area
@@ -118,16 +123,18 @@ func NewModel(opts Options) Model {
 	mouseEnabled := os.Getenv("TMUX") == ""
 
 	return Model{
-		commandInput: ti,
-		previewPort:  vp,
-		focused:      FocusTree,
-		options:      opts,
-		flatNodes:    []*tmux.TreeNode{},
-		historyIndex: -1,
-		sendMethod:   tmux.SendMethodEnterDelayed, // 500ms delay works for both Claude and Codex
-		lastClickIdx: -1,
-		mouseEnabled: mouseEnabled,
-		expanded:     map[string]bool{},
+		commandInput:     ti,
+		previewPort:      vp,
+		focused:          FocusTree,
+		options:          opts,
+		flatNodes:        []*tmux.TreeNode{},
+		historyIndex:     -1,
+		sendMethod:       tmux.SendMethodEnterDelayed, // 500ms delay works for both Claude and Codex
+		lastClickIdx:     -1,
+		mouseEnabled:     mouseEnabled,
+		expanded:         map[string]bool{},
+		mobileMode:       opts.MobileMode,
+		mobileForcedMode: opts.MobileMode,
 	}
 }
 
