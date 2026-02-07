@@ -197,7 +197,8 @@ func Exists(path string) bool {
 
 // DefaultTemplate returns a template for a new config file
 func DefaultTemplate() string {
-	return `# atmux configuration
+	return `# atmux (agent-tmux) configuration
+# Tips and docs: https://github.com/organisciak/atmux
 # This file configures windows and panes for your tmux session
 
 # Directives:
@@ -224,7 +225,8 @@ func DefaultTemplate() string {
 
 // GlobalTemplate returns a template for the global config file
 func GlobalTemplate() string {
-	return `# atmux global configuration
+	return `# atmux (agent-tmux) global configuration
+# Tips and docs: https://github.com/organisciak/atmux
 # Located at: ~/.config/atmux/config
 # Local .agent-tmux.conf files override these settings
 

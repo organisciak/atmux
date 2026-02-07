@@ -18,10 +18,10 @@ type SessionsOptions struct {
 
 // SessionsResult contains the outcome of the sessions list interaction.
 type SessionsResult struct {
-	SessionName   string           // Session selected for attach, empty if quit
-	WorkingDir    string           // Working directory for revival (if from history)
-	IsFromHistory bool             // True if reviving from history rather than attaching
-	Host          string           // Host label for remote sessions ("" for local)
+	SessionName   string            // Session selected for attach, empty if quit
+	WorkingDir    string            // Working directory for revival (if from history)
+	IsFromHistory bool              // True if reviving from history rather than attaching
+	Host          string            // Host label for remote sessions ("" for local)
 	Executor      tmux.TmuxExecutor // The executor for the selected session
 }
 
@@ -82,6 +82,7 @@ type sessionsModel struct {
 	executorMap        map[string]tmux.TmuxExecutor
 	confirmKill        bool
 	killSessionName    string
+	lineJump           lineJumpState
 }
 
 func newSessionsModel(executors []tmux.TmuxExecutor) sessionsModel {
@@ -214,6 +215,10 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 	case tea.KeyMsg:
+		if idx, ok := m.lineJump.consumeKey(msg, len(m.lines)); ok {
+			m.selectedIndex = idx
+			return m, nil
+		}
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
@@ -333,7 +338,8 @@ func (m sessionsModel) View() string {
 	if m.selectedIndex < len(m.lines) {
 		xHint = "x kill"
 	}
-	subtitle := lipgloss.NewStyle().Foreground(dimColor).Render("↑↓ select, Enter attach, " + xHint + ", q quit")
+	subtitle := lipgloss.NewStyle().Foreground(dimColor).Render("↑↓ select, digits jump, Enter attach, " + xHint + ", q quit")
+	numberWidth := len(fmt.Sprintf("%d", max(1, len(m.lines))))
 
 	var sections []string
 
@@ -413,16 +419,7 @@ func (m sessionsModel) View() string {
 				}
 				sections = append(sections, sectionHeader.Render(hostLabel))
 				for _, line := range groupMap[g.host].lines {
-					var row string
-					memSummary := m.memorySummary(line.Name)
-					if currentIdx == m.selectedIndex {
-						row = selectedStyle.Render("> ") + formatSessionLine(line.Line, selectedStyle)
-					} else {
-						row = "  " + formatSessionLine(line.Line, lipgloss.NewStyle())
-					}
-					if memSummary != "" {
-						row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
-					}
+					row := m.renderActiveSessionRow(currentIdx, line, numberWidth)
 					sections = append(sections, row)
 					currentIdx++
 				}
@@ -430,16 +427,7 @@ func (m sessionsModel) View() string {
 		} else {
 			sections = append(sections, sectionHeader.Render("Active"))
 			for i, line := range m.lines {
-				var row string
-				memSummary := m.memorySummary(line.Name)
-				if i == m.selectedIndex {
-					row = selectedStyle.Render("> ") + formatSessionLine(line.Line, selectedStyle)
-				} else {
-					row = "  " + formatSessionLine(line.Line, lipgloss.NewStyle())
-				}
-				if memSummary != "" {
-					row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
-				}
+				row := m.renderActiveSessionRow(i, line, numberWidth)
 				sections = append(sections, row)
 			}
 		}
@@ -590,4 +578,29 @@ func formatMemoryBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%dB", b)
 	}
+}
+
+func (m sessionsModel) renderActiveSessionRow(index int, line tmux.SessionLine, numberWidth int) string {
+	number := fmt.Sprintf("%*d.", numberWidth, index+1)
+	memSummary := m.memorySummary(line.Name)
+
+	if index == m.selectedIndex {
+		row := selectedStyle.Render("> ") +
+			selectedStyle.Render(number) +
+			" " +
+			formatSessionLine(line.Line, selectedStyle)
+		if memSummary != "" {
+			row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
+		}
+		return row
+	}
+
+	row := "  " +
+		lipgloss.NewStyle().Foreground(dimColor).Render(number) +
+		" " +
+		formatSessionLine(line.Line, lipgloss.NewStyle())
+	if memSummary != "" {
+		row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
+	}
+	return row
 }

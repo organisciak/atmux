@@ -41,16 +41,17 @@ const (
 )
 
 type openModel struct {
-	activeSessions []tmux.SessionLine
-	historyEntries []history.Entry
-	width          int
-	height         int
-	selectedIndex  int
-	activeTab      int // 0=active, 1=recent
+	activeSessions  []tmux.SessionLine
+	historyEntries  []history.Entry
+	width           int
+	height          int
+	selectedIndex   int
+	activeTab       int // 0=active, 1=recent
 	selectedSession string
 	selectedDir     string
 	isHistory       bool
 	loadError       error
+	lineJump        lineJumpState
 }
 
 func newOpenModel() openModel {
@@ -109,6 +110,10 @@ func (m openModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if idx, ok := m.lineJump.consumeKey(msg, m.currentTabLen()); ok {
+			m.selectedIndex = idx
+			return m, nil
+		}
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
@@ -130,13 +135,6 @@ func (m openModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			return m.selectCurrent()
-		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-			idx := int(msg.String()[0] - '1') // '1' -> 0, '2' -> 1, etc.
-			if idx < m.currentTabLen() {
-				m.selectedIndex = idx
-				return m.selectCurrent()
-			}
-			return m, nil
 		}
 
 	case tea.MouseMsg:
@@ -214,6 +212,7 @@ func (m openModel) View() string {
 	activeTabStyle := lipgloss.NewStyle().Bold(true).Foreground(primaryColor).Underline(true)
 	numStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	hintStyle := lipgloss.NewStyle().Foreground(dimColor)
+	numberWidth := len(fmt.Sprintf("%d", max(1, m.currentTabLen())))
 
 	// Title
 	title := titleStyle.Render("Open Session")
@@ -234,15 +233,20 @@ func (m openModel) View() string {
 			items = append(items, lipgloss.NewStyle().Foreground(dimColor).Render("  No active sessions"))
 		} else {
 			for i, s := range m.activeSessions {
-				num := numStyle.Render(fmt.Sprintf("%d.", i+1))
-				var name string
+				numText := fmt.Sprintf("%*d.", numberWidth, i+1)
+				var row string
 				if i == m.selectedIndex {
-					name = selectedStyle.Render("> ") + formatSessionName(s.Name, selectedStyle)
-					num = ""
+					row = selectedStyle.Render("> ") +
+						selectedStyle.Render(numText) +
+						" " +
+						formatSessionName(s.Name, selectedStyle)
 				} else {
-					name = "  " + formatSessionName(s.Name, lipgloss.NewStyle())
+					row = "  " +
+						numStyle.Render(numText) +
+						" " +
+						formatSessionName(s.Name, lipgloss.NewStyle())
 				}
-				items = append(items, fmt.Sprintf("%s %s", num, name))
+				items = append(items, row)
 			}
 		}
 	} else {
@@ -250,22 +254,31 @@ func (m openModel) View() string {
 			items = append(items, lipgloss.NewStyle().Foreground(dimColor).Render("  No recent sessions"))
 		} else {
 			for i, e := range m.historyEntries {
-				num := numStyle.Render(fmt.Sprintf("%d.", i+1))
+				numText := fmt.Sprintf("%*d.", numberWidth, i+1)
 				ago := openTimeAgo(e.LastUsedAt)
-				var name string
+				var row string
 				if i == m.selectedIndex {
-					name = selectedStyle.Render("> ") + formatSessionName(e.Name, selectedStyle) + "  " + selectedStyle.Render("("+ago+")")
-					num = ""
+					row = selectedStyle.Render("> ") +
+						selectedStyle.Render(numText) +
+						" " +
+						formatSessionName(e.Name, selectedStyle) +
+						"  " +
+						selectedStyle.Render("("+ago+")")
 				} else {
-					name = "  " + formatSessionName(e.Name, lipgloss.NewStyle()) + "  " + hintStyle.Render("("+ago+")")
+					row = "  " +
+						numStyle.Render(numText) +
+						" " +
+						formatSessionName(e.Name, lipgloss.NewStyle()) +
+						"  " +
+						hintStyle.Render("("+ago+")")
 				}
-				items = append(items, fmt.Sprintf("%s %s", num, name))
+				items = append(items, row)
 			}
 		}
 	}
 
 	// Hints
-	hints := hintStyle.Render("1-9 quick select • ↑↓ navigate • Enter select • q quit")
+	hints := hintStyle.Render("digits jump • ↑↓ navigate • Enter select • q quit")
 
 	// Combine
 	sections := []string{title, tabs, ""}

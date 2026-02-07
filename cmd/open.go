@@ -13,7 +13,8 @@ var openCmd = &cobra.Command{
 	Short: "Quick session selector with number shortcuts",
 	Long: `Open provides a streamlined TUI for quickly jumping into sessions.
 
-Press 1-9 to instantly select a session, or use arrow keys and Enter.
+Type digits to jump to a numbered row, then press Enter.
+You can also use arrow keys and Enter.
 Tab switches between Active and Recent sessions.`,
 	RunE: runOpen,
 }

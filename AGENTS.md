@@ -1,5 +1,15 @@
 # Repository Guidelines
 
+## Agent Orchestration
+- When spawning parallel task agents across worktrees, use lightweight/focused agents rather than heavyweight exploratory ones. Agents should start implementing immediately, not spend time exploring the codebase.
+- Always provide agents with specific file paths and clear scope to avoid excessive exploration phases.
+- Before starting parallel agent work, verify that target issues/tasks are still open and in the expected state. Do not assume labels or issue states from previous sessions are current.
+- When working with multiple worktree branches, proactively analyze file overlap between tasks BEFORE spawning agents. Plan merge order to minimize conflicts. After merging, always run tests before pushing.
+
+## BEADS Workflow
+- BEADS tasks should be executed in parallel using Task agents (not Teammate agents) across separate git worktrees.
+- Each agent gets one task, one worktree. After completion, merge sequentially, resolve conflicts, run tests, then push.
+
 ## Project Structure & Module Organization
 - `cmd/`: Cobra CLI commands (`root.go`, `list.go`, `attach.go`, etc.).
 - `tmux/`: Session orchestration and tmux command execution (`session.go`).
@@ -7,6 +17,9 @@
 - `main.go`: Entrypoint wiring the CLI.
 - `homebrew/`: Homebrew formula (`atmux.rb`) and alias (`agent-tmux.rb`).
 - Top-level `Makefile`, `go.mod`, `go.sum` define build and dependencies.
+
+## Languages
+- Primary language is Go. Also uses TypeScript, JavaScript, Markdown, and YAML. Always run `go test ./...` after Go changes and ensure code compiles before committing.
 
 ## Build, Test, and Development Commands
 - `make build`: Build the `atmux` binary with version metadata.
