@@ -7,10 +7,10 @@ atmux (short for agent-tmux) gives you per-project tmux sessions tuned for AI co
 Just give it a spin:
 
 ```bash
-brew install --build-from-source ./homebrew/atmux.rb
-# or, if you use the tap:
-# brew tap organisciak/tap
-# brew install atmux
+brew tap organisciak/tap
+brew install atmux
+# or build from source:
+# brew install --build-from-source ./homebrew/atmux.rb
 
 # go to a project you're working on
 cd ~/projects/my-app
@@ -49,13 +49,7 @@ brew uninstall atmux agent-tmux
 
 ## Installation
 
-### Homebrew
-
-```bash
-brew install --build-from-source ./homebrew/atmux.rb
-```
-
-Or, if you use the tap:
+### Homebrew (recommended)
 
 ```bash
 brew tap organisciak/tap
@@ -65,7 +59,15 @@ brew install atmux
 Homebrew installs the `atmux` command.
 Alias: `brew install agent-tmux` (installs `atmux` plus an `agent-tmux` wrapper).
 
-### From source
+### Build from source
+
+If you prefer to build locally:
+
+```bash
+brew install --build-from-source ./homebrew/atmux.rb
+```
+
+### Manual install
 
 ```bash
 git clone https://github.com/organisciak/atmux.git
