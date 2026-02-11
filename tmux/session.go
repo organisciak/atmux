@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/porganisciak/agent-tmux/config"
@@ -19,9 +21,10 @@ type Session struct {
 
 // SessionLine mirrors a single line from `tmux list-sessions`.
 type SessionLine struct {
-	Name string
-	Line string
-	Host string // Remote host label (empty for local)
+	Name     string
+	Line     string
+	Host     string // Remote host label (empty for local)
+	Activity int64  // Unix timestamp of last activity (for sorting)
 }
 
 // NewSession creates a new session configuration based on the current directory
@@ -177,15 +180,28 @@ func ListSessions() ([]string, error) {
 	return sessions, nil
 }
 
-// ListSessionsRaw returns tmux list-sessions output with parsed names.
+// sessionListFormat is the tmux format string used for list-sessions.
+// It prepends the activity timestamp (tab-separated) to a display line
+// that closely matches the default tmux output.
+const sessionListFormat = `#{session_activity}	#{session_name}: #{session_windows} windows (created #{t:session_created})#{?session_attached, (attached),}`
+
+// ListSessionsRaw returns tmux list-sessions output with parsed names,
+// sorted by most recently active first.
 func ListSessionsRaw() ([]SessionLine, error) {
-	cmd := exec.Command("tmux", "list-sessions")
+	cmd := exec.Command("tmux", "list-sessions", "-F", sessionListFormat)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	sessions := parseSessionLines(string(output))
+	sortSessionsByActivity(sessions)
+	return sessions, nil
+}
+
+// parseSessionLines parses lines from the activity-prefixed format.
+func parseSessionLines(output string) []SessionLine {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
 	var sessions []SessionLine
 	for _, line := range lines {
 		if strings.TrimSpace(line) == "" {
@@ -193,16 +209,35 @@ func ListSessionsRaw() ([]SessionLine, error) {
 		}
 		sessions = append(sessions, parseSessionLine(line))
 	}
-	return sessions, nil
+	return sessions
 }
 
 func parseSessionLine(line string) SessionLine {
 	trimmed := strings.TrimSpace(line)
-	name := trimmed
-	if idx := strings.Index(trimmed, ":"); idx != -1 {
-		name = trimmed[:idx]
+
+	var activity int64
+	displayLine := trimmed
+
+	// Parse "activity\tdisplay_line" format
+	if idx := strings.IndexByte(trimmed, '\t'); idx != -1 {
+		if ts, err := strconv.ParseInt(trimmed[:idx], 10, 64); err == nil {
+			activity = ts
+			displayLine = trimmed[idx+1:]
+		}
 	}
-	return SessionLine{Name: name, Line: trimmed}
+
+	name := displayLine
+	if idx := strings.Index(displayLine, ":"); idx != -1 {
+		name = displayLine[:idx]
+	}
+	return SessionLine{Name: name, Line: displayLine, Activity: activity}
+}
+
+// sortSessionsByActivity sorts sessions by activity timestamp, most recent first.
+func sortSessionsByActivity(sessions []SessionLine) {
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return sessions[i].Activity > sessions[j].Activity
+	})
 }
 
 // KillSession kills a session by name
@@ -211,23 +246,20 @@ func KillSession(name string) error {
 	return cmd.Run()
 }
 
-// ListSessionsRawWithExecutor returns tmux list-sessions output using the given executor.
+// ListSessionsRawWithExecutor returns tmux list-sessions output using the given executor,
+// sorted by most recently active first.
 func ListSessionsRawWithExecutor(exec TmuxExecutor) ([]SessionLine, error) {
-	output, err := exec.Output("list-sessions")
+	output, err := exec.Output("list-sessions", "-F", sessionListFormat)
 	if err != nil {
 		return nil, err
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	var sessions []SessionLine
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		sl := parseSessionLine(line)
-		sl.Host = exec.HostLabel()
-		sessions = append(sessions, sl)
+	sessions := parseSessionLines(string(output))
+	host := exec.HostLabel()
+	for i := range sessions {
+		sessions[i].Host = host
 	}
+	sortSessionsByActivity(sessions)
 	return sessions, nil
 }
 

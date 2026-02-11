@@ -59,7 +59,7 @@ func TestLineJumpStateFallsBackToLatestDigit(t *testing.T) {
 }
 
 func TestSessionsModelDigitJumpMultiDigit(t *testing.T) {
-	m := newSessionsModel(nil)
+	m := newSessionsModel(nil, false)
 	m.lines = makeSessionLines(12)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})

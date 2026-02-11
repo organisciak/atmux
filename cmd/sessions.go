@@ -21,15 +21,19 @@ var sessionsCmd = &cobra.Command{
 
 var (
 	sessionsInline         bool
+	sessionsPopup          bool
 	sessionsNoPopup        bool
 	sessionsNonInteractive bool
+	sessionsNoBeads        bool
 )
 
 func init() {
 	rootCmd.AddCommand(sessionsCmd)
 	sessionsCmd.Flags().BoolVar(&sessionsInline, "inline", true, "Render without alt screen (non-fullscreen)")
+	sessionsCmd.Flags().BoolVarP(&sessionsPopup, "popup", "p", false, "Force popup mode (even outside tmux conditions)")
 	sessionsCmd.Flags().BoolVar(&sessionsNoPopup, "no-popup", false, "Disable popup mode (default: popup when inside tmux)")
 	sessionsCmd.Flags().BoolVarP(&sessionsNonInteractive, "non-interactive", "n", false, "Print sessions and exit (no TUI)")
+	sessionsCmd.Flags().BoolVar(&sessionsNoBeads, "no-beads", false, "Hide beads issue counts per session")
 }
 
 func runSessions(cmd *cobra.Command, args []string) error {
@@ -50,14 +54,15 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Default to popup when inside tmux, unless --no-popup is set
+	// Force popup with -p, or default to popup when inside tmux (unless --no-popup)
 	insideTmux := os.Getenv("TMUX") != ""
-	if insideTmux && !sessionsNoPopup && !sessionsInline {
+	if sessionsPopup || (insideTmux && !sessionsNoPopup && !sessionsInline) {
 		return launchAsPopup("sessions")
 	}
 
 	result, err := tui.RunSessionsList(tui.SessionsOptions{
 		AltScreen: !sessionsInline,
+		ShowBeads: !sessionsNoBeads,
 	})
 	if err != nil {
 		return err

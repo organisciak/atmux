@@ -1,7 +1,12 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +19,7 @@ import (
 type SessionsOptions struct {
 	AltScreen bool
 	Executors []tmux.TmuxExecutor // Executors for local + remote hosts
+	ShowBeads bool                // Show beads issue counts per session
 }
 
 // SessionsResult contains the outcome of the sessions list interaction.
@@ -31,7 +37,7 @@ func RunSessionsList(opts SessionsOptions) (*SessionsResult, error) {
 	if len(executors) == 0 {
 		executors = []tmux.TmuxExecutor{tmux.NewLocalExecutor()}
 	}
-	m := newSessionsModel(executors)
+	m := newSessionsModel(executors, opts.ShowBeads)
 	programOptions := []tea.ProgramOption{
 		tea.WithMouseCellMotion(),
 	}
@@ -68,6 +74,8 @@ type sessionsModel struct {
 	lines              []tmux.SessionLine
 	historyEntries     []history.Entry
 	memoryBySession    map[string]tmux.SessionMemory
+	beadsCounts        map[string]*int // nil value = not loaded yet; *int distinguishes "not loaded" from "0 open"
+	showBeads          bool
 	width              int
 	height             int
 	selectedIndex      int
@@ -85,7 +93,7 @@ type sessionsModel struct {
 	lineJump           lineJumpState
 }
 
-func newSessionsModel(executors []tmux.TmuxExecutor) sessionsModel {
+func newSessionsModel(executors []tmux.TmuxExecutor, showBeads bool) sessionsModel {
 	executorMap := make(map[string]tmux.TmuxExecutor, len(executors))
 	for _, exec := range executors {
 		executorMap[exec.HostLabel()] = exec
@@ -94,6 +102,7 @@ func newSessionsModel(executors []tmux.TmuxExecutor) sessionsModel {
 		selectedIndex: 0,
 		executors:     executors,
 		executorMap:   executorMap,
+		showBeads:     showBeads,
 	}
 }
 
@@ -128,6 +137,10 @@ func (m sessionsModel) fetchAllSessions() tea.Cmd {
 			}
 			allLines = append(allLines, lines...)
 		}
+		// Sort merged results by most recently active first
+		sort.SliceStable(allLines, func(i, j int) bool {
+			return allLines[i].Activity > allLines[j].Activity
+		})
 		return sessionsLoadedMsg{lines: allLines, err: nil}
 	}
 }
@@ -152,6 +165,36 @@ type killSessionMsg struct {
 	err         error
 }
 
+type beadsCountMsg struct {
+	sessionName string
+	count       int
+	hasBeads    bool
+	err         error
+}
+
+func fetchBeadsCount(sessionName string) tea.Cmd {
+	return func() tea.Msg {
+		path := tmux.GetSessionPath(sessionName)
+		if path == "" {
+			return beadsCountMsg{sessionName: sessionName, hasBeads: false}
+		}
+		if _, err := os.Stat(filepath.Join(path, ".beads")); err != nil {
+			return beadsCountMsg{sessionName: sessionName, hasBeads: false}
+		}
+		cmd := exec.Command("bd", "count", "--status=open", "--json")
+		cmd.Dir = path
+		output, err := cmd.Output()
+		if err != nil {
+			return beadsCountMsg{sessionName: sessionName, hasBeads: true, err: err}
+		}
+		var result struct {
+			Count int `json:"count"`
+		}
+		json.Unmarshal(output, &result)
+		return beadsCountMsg{sessionName: sessionName, count: result.Count, hasBeads: true}
+	}
+}
+
 func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle kill confirmation if active
 	if m.confirmKill {
@@ -173,6 +216,26 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lines = msg.lines
 		m.lastError = msg.err
 		m.clampSelection()
+		if m.showBeads {
+			var cmds []tea.Cmd
+			for _, line := range m.lines {
+				cmds = append(cmds, fetchBeadsCount(line.Name))
+			}
+			return m, tea.Batch(cmds...)
+		}
+		return m, nil
+	case beadsCountMsg:
+		if !msg.hasBeads {
+			return m, nil
+		}
+		if m.beadsCounts == nil {
+			m.beadsCounts = make(map[string]*int)
+		}
+		if msg.err != nil {
+			return m, nil
+		}
+		count := msg.count
+		m.beadsCounts[msg.sessionName] = &count
 		return m, nil
 	case memoryLoadedMsg:
 		m.memoryBySession = msg.memory
@@ -580,15 +643,34 @@ func formatMemoryBytes(b int64) string {
 	}
 }
 
+func (m sessionsModel) beadsLabel(sessionName string) string {
+	if !m.showBeads {
+		return ""
+	}
+	count, ok := m.beadsCounts[sessionName]
+	if !ok || count == nil {
+		return ""
+	}
+	label := fmt.Sprintf("bd:%d", *count)
+	if *count > 0 {
+		return beadsCountStyle.Render(label)
+	}
+	return lipgloss.NewStyle().Foreground(dimColor).Render(label)
+}
+
 func (m sessionsModel) renderActiveSessionRow(index int, line tmux.SessionLine, numberWidth int) string {
 	number := fmt.Sprintf("%*d.", numberWidth, index+1)
 	memSummary := m.memorySummary(line.Name)
+	bdLabel := m.beadsLabel(line.Name)
 
 	if index == m.selectedIndex {
 		row := selectedStyle.Render("> ") +
 			selectedStyle.Render(number) +
 			" " +
 			formatSessionLine(line.Line, selectedStyle)
+		if bdLabel != "" {
+			row += "  " + bdLabel
+		}
 		if memSummary != "" {
 			row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
 		}
@@ -599,6 +681,9 @@ func (m sessionsModel) renderActiveSessionRow(index int, line tmux.SessionLine, 
 		lipgloss.NewStyle().Foreground(dimColor).Render(number) +
 		" " +
 		formatSessionLine(line.Line, lipgloss.NewStyle())
+	if bdLabel != "" {
+		row += "  " + bdLabel
+	}
 	if memSummary != "" {
 		row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
 	}
