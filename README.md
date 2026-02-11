@@ -102,6 +102,7 @@ atmux attach NAME     # Alias for sessions NAME
 atmux list-sessions   # Alias for sessions
 atmux browse          # Interactive session browser with pane previews
 atmux open            # Quick TUI to jump into active or recent sessions
+atmux send TARGET TXT # Send text to a target pane (local or remote)
 atmux kill NAME       # Kill a specific session
 atmux kill --all      # Kill all atmux sessions
 atmux init            # Create a .agent-tmux.conf template
@@ -132,6 +133,32 @@ atmux sessions
 - Click or select a session to attach
 - Renders inline by default
 
+#### Remote tmux sessions
+
+`atmux` includes remote tmux execution via SSH-backed executors. Today, this is exposed through `atmux send --remote`.
+
+```bash
+# Send to one remote host
+atmux send --remote=devbox agent-my-app:agents.0 "bd ready"
+
+# Send the same command to multiple remote hosts
+atmux send --remote=user@host1,user@host2 agent-my-app:agents.0 "/compact"
+```
+
+Requirements:
+- `ssh` installed locally
+- `tmux` installed on each remote host
+- target pane exists on each remote host
+- optional host aliases via `remote_*` directives in `.agent-tmux.conf` or global config
+
+Behavior:
+- One executor per remote host
+- SSH ControlMaster connection reuse (`ControlPersist=300`)
+- 10 second timeout per remote tmux command
+- host keys accepted on first connect (`StrictHostKeyChecking=accept-new`)
+
+For full details, see `docs/remote-sessions.md`.
+
 ## Configuration
 
 Create a `.agent-tmux.conf` file in your project root to customize the session:
@@ -160,6 +187,12 @@ vpane:tail -f logs/error.log
 # Add panes to the existing agents window
 agents:htop
 vagents:watch -n 1 'git status'
+
+# Optional: remote host aliases for --remote flags
+remote_host:user@devbox.example.com
+remote_alias:devbox
+remote_port:22
+remote_attach:ssh
 ```
 
 ### Directives
@@ -171,6 +204,10 @@ vagents:watch -n 1 'git status'
 | `vpane:cmd` | Add vertical pane to current window |
 | `agents:cmd` | Add horizontal pane to the agents window |
 | `vagents:cmd` | Add vertical pane to the agents window |
+| `remote_host:host` | Define a remote host for alias resolution |
+| `remote_alias:name` | Set alias for the most recent `remote_host` |
+| `remote_port:port` | Set SSH port for the most recent `remote_host` |
+| `remote_attach:ssh\|mosh` | Set attach method for the most recent `remote_host` |
 
 ## Shell Completions
 
