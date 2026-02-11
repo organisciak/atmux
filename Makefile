@@ -14,6 +14,7 @@ test:
 
 install: build
 	cp $(BINARY_NAME) "$$(brew --prefix)/bin/"
+	codesign -f -s - "$$(brew --prefix)/bin/$(BINARY_NAME)"
 	@echo "Installed to $$(brew --prefix)/bin/$(BINARY_NAME)"
 
 clean:

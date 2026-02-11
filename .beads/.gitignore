@@ -9,6 +9,7 @@
 daemon.lock
 daemon.log
 daemon.pid
+.bv.lock
 bd.sock
 sync-state.json
 last-touched
@@ -31,6 +32,9 @@ beads.left.jsonl
 beads.left.meta.json
 beads.right.jsonl
 beads.right.meta.json
+
+# Per-worktree export state caches (machine/local path specific)
+export-state/*.json
 
 # Sync state (local-only, per-machine)
 # These files are machine-specific and should not be shared across clones
