@@ -191,6 +191,9 @@ func ListSessionsRaw() ([]SessionLine, error) {
 	cmd := exec.Command("tmux", "list-sessions", "-F", sessionListFormat)
 	output, err := cmd.Output()
 	if err != nil {
+		if isNoServerError(err) {
+			return []SessionLine{}, nil
+		}
 		return nil, err
 	}
 
@@ -251,6 +254,9 @@ func KillSession(name string) error {
 func ListSessionsRawWithExecutor(exec TmuxExecutor) ([]SessionLine, error) {
 	output, err := exec.Output("list-sessions", "-F", sessionListFormat)
 	if err != nil {
+		if isNoServerError(err) {
+			return []SessionLine{}, nil
+		}
 		return nil, err
 	}
 
@@ -271,4 +277,25 @@ func GetSessionPath(name string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(output))
+}
+
+func isNoServerError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		if isNoServerStderr(string(exitErr.Stderr)) {
+			return true
+		}
+	}
+
+	return isNoServerStderr(err.Error())
+}
+
+func isNoServerStderr(stderr string) bool {
+	lower := strings.ToLower(stderr)
+	return strings.Contains(lower, "no server running") ||
+		strings.Contains(lower, "failed to connect to server") ||
+		strings.Contains(lower, "error connecting to")
 }
