@@ -239,6 +239,19 @@ make release
 
 # Run tests
 make test
+
+# Show commits since the latest version tag (v*)
+make version-status
+
+# Create annotated release tag summary (and optionally push)
+make tag-version VERSION=v0.2.0
+make tag-version VERSION=v0.2.0 PUSH=1
+
+# Update Homebrew formula URL + SHA for a version tag
+make brew-bump VERSION=v0.2.0
+
+# Install local git hooks (includes post-commit version reminder)
+make install-hooks
 ```
 
 ## License
