@@ -200,10 +200,10 @@ var (
 	wizCronHeaderStyle = lipgloss.NewStyle().Width(10).Align(lipgloss.Center)
 
 	wizCronHeaderFocusStyle = lipgloss.NewStyle().
-					Width(10).
-					Align(lipgloss.Center).
-					Bold(true).
-					Foreground(primaryColor)
+				Width(10).
+				Align(lipgloss.Center).
+				Bold(true).
+				Foreground(primaryColor)
 
 	wizCronRangeStyle = lipgloss.NewStyle().
 				Width(10).
@@ -238,17 +238,20 @@ var (
 				Bold(true)
 
 	wizCancelBtnActiveStyle = lipgloss.NewStyle().
-					Background(errorColor).
-					Foreground(lipgloss.Color("255")).
-					Padding(0, 1).
-					Bold(true)
+				Background(errorColor).
+				Foreground(lipgloss.Color("255")).
+				Padding(0, 1).
+				Bold(true)
 
 	wizSaveBtnInactiveStyle = lipgloss.NewStyle().
-					Background(dimColor).
-					Foreground(lipgloss.Color("255")).
-					Padding(0, 1)
+				Background(dimColor).
+				Foreground(lipgloss.Color("255")).
+				Padding(0, 1)
 
 	wizSeparatorStyle = lipgloss.NewStyle().Foreground(dimColor)
+
+	// Beads count style (yellow/orange for non-zero counts)
+	beadsCountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 )
 
 // Helper to get tree node style based on type and state

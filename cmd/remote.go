@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/porganisciak/agent-tmux/config"
@@ -13,49 +12,37 @@ import (
 
 // buildExecutors builds a list of TmuxExecutors from config and --remote flag.
 // The local executor is always first. Remote executors follow.
-func buildExecutors(remoteFlag string) []tmux.TmuxExecutor {
+func buildExecutors(remoteFlag string) ([]tmux.TmuxExecutor, error) {
 	executors := []tmux.TmuxExecutor{tmux.NewLocalExecutor()}
 
-	// Add executors from config
-	cfg := loadRemoteConfig()
-	for _, rh := range cfg.RemoteHosts {
+	cfg, err := loadRemoteConfig()
+	if err != nil {
+		return nil, err
+	}
+	remoteHosts, err := config.ResolveRemoteHosts(cfg, remoteFlag, true)
+	if err != nil {
+		return nil, err
+	}
+	for _, rh := range remoteHosts {
 		executors = append(executors, tmux.NewRemoteExecutor(
 			rh.Host, rh.Port, rh.AttachMethod, rh.Alias,
 		))
 	}
 
-	// Add executors from --remote flag (comma-separated user@host values)
-	if remoteFlag != "" {
-		for _, host := range strings.Split(remoteFlag, ",") {
-			host = strings.TrimSpace(host)
-			if host == "" {
-				continue
-			}
-			// Check if this host is already in the config
-			found := false
-			for _, rh := range cfg.RemoteHosts {
-				if rh.Host == host || rh.Alias == host {
-					found = true
-					break
-				}
-			}
-			if !found {
-				executors = append(executors, tmux.NewRemoteExecutor(host, 22, "ssh", host))
-			}
-		}
-	}
-
-	return executors
+	return executors, nil
 }
 
 // loadRemoteConfig loads remote host config from global and local configs.
-func loadRemoteConfig() *config.Config {
+func loadRemoteConfig() (*config.Config, error) {
 	localPath := filepath.Join(".", config.DefaultConfigName)
 	cfg, err := config.LoadConfig(localPath)
 	if err != nil || cfg == nil {
-		return &config.Config{}
+		if err != nil {
+			return nil, err
+		}
+		return &config.Config{}, nil
 	}
-	return cfg
+	return cfg, nil
 }
 
 // closeExecutors cleans up all executors (e.g., SSH ControlMaster sockets).

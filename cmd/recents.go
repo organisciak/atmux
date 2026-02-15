@@ -30,9 +30,10 @@ Controls:
 }
 
 var (
-	recentsNoPopup bool
-	recentsList    bool
-	recentsLimit   int
+	recentsNoPopup   bool
+	recentsList      bool
+	recentsLimit     int
+	recentsHidePaths bool
 )
 
 func init() {
@@ -40,6 +41,7 @@ func init() {
 	recentsCmd.Flags().BoolVar(&recentsNoPopup, "no-popup", false, "Disable popup mode (default: popup when inside tmux)")
 	recentsCmd.Flags().BoolVarP(&recentsList, "list", "l", false, "List recent sessions (non-interactive)")
 	recentsCmd.Flags().IntVar(&recentsLimit, "limit", 20, "Maximum number of sessions to show")
+	recentsCmd.Flags().BoolVar(&recentsHidePaths, "hide-paths", false, hidePathsHelpText)
 }
 
 func runRecents(cmd *cobra.Command, args []string) error {
@@ -101,8 +103,7 @@ func runRecentsList(cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
 	for _, e := range entries {
 		ago := timeAgo(e.LastUsedAt)
-		// Shorten path for display
-		displayPath := shortenPath(e.WorkingDirectory)
+		displayPath := displayPathForList(e.WorkingDirectory, recentsHidePaths, true)
 		fmt.Fprintf(out, "%s  %s  %s\n",
 			nameStyle.Render(e.Name),
 			dimStyle.Render(displayPath),
@@ -110,22 +111,6 @@ func runRecentsList(cmd *cobra.Command) error {
 	}
 
 	return nil
-}
-
-// shortenPath replaces home directory with ~ for cleaner display
-func shortenPath(path string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	if len(path) > len(home) && path[:len(home)] == home {
-		return "~" + path[len(home):]
-	}
-	// Also handle trailing slash case
-	if path == home {
-		return "~"
-	}
-	return path
 }
 
 // expandPath expands ~ to home directory

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/porganisciak/agent-tmux/config"
 	"github.com/porganisciak/agent-tmux/tmux"
 	"github.com/spf13/cobra"
 )
@@ -42,7 +43,7 @@ func init() {
 	sendCmd.Flags().StringVarP(&sendMethod, "method", "m", "enter-delayed",
 		"Send method: enter, enter-delayed, enter-literal, cm")
 	sendCmd.Flags().StringVarP(&sendRemote, "remote", "r", "",
-		"Remote host(s) to send to (comma-separated)")
+		"Remote host(s) or aliases to send to (comma-separated)")
 	sendCmd.Flags().BoolVarP(&sendNoEnter, "no-enter", "n", false,
 		"Send text without pressing Enter")
 
@@ -56,13 +57,22 @@ func runSend(cmd *cobra.Command, args []string) error {
 	// Build executor(s)
 	var executors []tmux.TmuxExecutor
 	if sendRemote != "" {
-		// Use only remote executors specified by --remote flag
-		for _, host := range strings.Split(sendRemote, ",") {
-			host = strings.TrimSpace(host)
-			if host == "" {
-				continue
-			}
-			executors = append(executors, tmux.NewRemoteExecutor(host, 22, "ssh", host))
+		cfg, err := loadRemoteConfig()
+		if err != nil {
+			return fmt.Errorf("failed to load remote host config: %w", err)
+		}
+		remoteHosts, err := config.ResolveRemoteHosts(cfg, sendRemote, false)
+		if err != nil {
+			return err
+		}
+		if len(remoteHosts) == 0 {
+			return fmt.Errorf("no remote hosts resolved from --remote")
+		}
+		// Use only remote executors specified by --remote flag.
+		for _, host := range remoteHosts {
+			executors = append(executors, tmux.NewRemoteExecutor(
+				host.Host, host.Port, host.AttachMethod, host.Alias,
+			))
 		}
 	} else {
 		// Use local executor

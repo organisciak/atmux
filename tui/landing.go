@@ -95,6 +95,7 @@ type landingModel struct {
 	clickZones      []clickZone // Clickable areas calculated during render
 	confirmKill     bool        // Whether kill confirmation is active
 	killSessionName string      // Session name pending kill confirmation
+	lineJump        lineJumpState
 }
 
 // landingKillMsg is returned after attempting to kill a session.
@@ -263,6 +264,12 @@ func (m landingModel) hasRecentFooter() bool {
 }
 
 func (m landingModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if idx, ok := m.lineJump.consumeKey(msg, len(m.sessions)); ok {
+		m.focusedSection = sectionSessions
+		m.selectedIndex = idx
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
@@ -752,6 +759,7 @@ func (m landingModel) renderSessionsSection() string {
 	var rows []string
 	rows = append(rows, header)
 	rows = append(rows, divider)
+	numberWidth := len(fmt.Sprintf("%d", max(1, len(m.sessions))))
 
 	if m.lastError != nil {
 		errStyle := lipgloss.NewStyle().Foreground(errorColor)
@@ -761,12 +769,13 @@ func (m landingModel) renderSessionsSection() string {
 		rows = append(rows, emptyStyle.Render("  No active sessions"))
 	} else {
 		for i, session := range m.sessions {
-			prefix := "    "
+			number := fmt.Sprintf("%*d.", numberWidth, i+1)
+			prefix := "  "
 			prefixStyle := lipgloss.NewStyle()
 			lineStyle := lipgloss.NewStyle()
 
 			if m.focusedSection == sectionSessions && i == m.selectedIndex {
-				prefix = "  > "
+				prefix = selectedStyle.Render("> ")
 				prefixStyle = prefixStyle.Bold(true).Inherit(selectedStyle)
 				lineStyle = lineStyle.Bold(true).Inherit(selectedStyle)
 			}
@@ -777,7 +786,16 @@ func (m landingModel) renderSessionsSection() string {
 			}
 
 			formattedLine := formatSessionLine(session.Line, lineStyle)
-			rows = append(rows, prefixStyle.Render(prefix)+formattedLine)
+			numberStyle := lipgloss.NewStyle().Foreground(dimColor)
+			if m.focusedSection == sectionSessions && i == m.selectedIndex {
+				numberStyle = numberStyle.Bold(true).Inherit(selectedStyle)
+			}
+			row := prefix + numberStyle.Render(number) + " " + formattedLine
+			if m.focusedSection == sectionSessions && i == m.selectedIndex {
+				rows = append(rows, row)
+			} else {
+				rows = append(rows, prefixStyle.Render(row))
+			}
 		}
 	}
 
@@ -931,6 +949,7 @@ func (m landingModel) renderOptionsSection() string {
 func (m landingModel) renderStatusBar() string {
 	hints := []string{
 		"↑↓ navigate",
+		"digits jump",
 		"Tab section",
 		"Enter select",
 		"Space toggle",

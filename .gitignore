@@ -14,3 +14,7 @@ dist/
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# local drafts/reference material (not for commit)
+local-reference/
+*.log

@@ -37,6 +37,7 @@ var historyRemoveCmd = &cobra.Command{
 }
 
 var historyJSON bool
+var historyHidePaths bool
 
 func init() {
 	rootCmd.AddCommand(historyCmd)
@@ -45,6 +46,7 @@ func init() {
 	historyCmd.AddCommand(historyRemoveCmd)
 
 	historyListCmd.Flags().BoolVar(&historyJSON, "json", false, "Output as JSON")
+	historyListCmd.Flags().BoolVar(&historyHidePaths, "hide-paths", false, hidePathsHelpText)
 }
 
 func runHistoryList(cmd *cobra.Command, args []string) error {
@@ -88,7 +90,7 @@ func runHistoryList(cmd *cobra.Command, args []string) error {
 			dimStyle.Render(fmt.Sprintf("%2d.", i+1)),
 			nameStyle.Render(e.Name))
 		fmt.Fprintf(out, "    %s  %s\n",
-			dimStyle.Render(e.WorkingDirectory),
+			dimStyle.Render(displayPathForList(e.WorkingDirectory, historyHidePaths, false)),
 			dimStyle.Render("("+ago+")"))
 	}
 

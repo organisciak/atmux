@@ -4,7 +4,7 @@ COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 BUILD_DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS=-ldflags "-X github.com/porganisciak/agent-tmux/cmd.Version=$(VERSION) -X github.com/porganisciak/agent-tmux/cmd.Commit=$(COMMIT) -X github.com/porganisciak/agent-tmux/cmd.BuildDate=$(BUILD_DATE)"
 
-.PHONY: build test install clean release
+.PHONY: build test install clean release tag-version brew-bump version-status install-hooks
 
 build:
 	go build $(LDFLAGS) -o $(BINARY_NAME) .
@@ -14,6 +14,7 @@ test:
 
 install: build
 	cp $(BINARY_NAME) "$$(brew --prefix)/bin/"
+	codesign -f -s - "$$(brew --prefix)/bin/$(BINARY_NAME)"
 	@echo "Installed to $$(brew --prefix)/bin/$(BINARY_NAME)"
 
 clean:
@@ -26,3 +27,16 @@ release:
 	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-darwin-arm64 .
 	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-linux-amd64 .
 	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-linux-arm64 .
+
+tag-version:
+	./scripts/tag-version.sh "$(VERSION)" $(if $(PUSH),--push,)
+
+brew-bump:
+	./scripts/brew-bump.sh "$(VERSION)"
+
+version-status:
+	./scripts/commits-since-version.sh
+
+install-hooks:
+	git config core.hooksPath .githooks
+	@echo "Installed hooks path: .githooks"

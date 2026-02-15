@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "${repo_root}" ]]; then
+  exit 0
+fi
+
+reminder_script="${repo_root}/scripts/commits-since-version.sh"
+if [[ ! -x "${reminder_script}" ]]; then
+  exit 0
+fi
+
+"${reminder_script}" --hook || true
