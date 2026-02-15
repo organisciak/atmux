@@ -746,7 +746,7 @@ func (m landingModel) renderSessionsSection() string {
 		Bold(true).
 		Foreground(secondaryColor)
 
-	header := headerStyle.Render("Attach Active Session")
+	header := headerStyle.Render("Attach active session")
 	divider := lipgloss.NewStyle().Foreground(dimColor).Render(strings.Repeat("─", 12))
 
 	var rows []string
