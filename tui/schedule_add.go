@@ -181,6 +181,10 @@ func (m scheduleWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
+
+	case tea.MouseMsg:
+		// Absorb mouse events without side effects
+		return m, nil
 	}
 
 	// Update text inputs if they are focused
