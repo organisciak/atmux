@@ -103,6 +103,7 @@ atmux list-sessions   # Alias for sessions
 atmux browse          # Interactive session browser with pane previews
 atmux open            # Quick TUI to jump into active or recent sessions
 atmux send TARGET TXT # Send text to a target pane (local or remote)
+atmux remote-project  # Create a reusable remote project entry in global config
 atmux kill NAME       # Kill a specific session
 atmux kill --all      # Kill all atmux sessions
 atmux init            # Create a .agent-tmux.conf template
@@ -208,6 +209,10 @@ remote_attach:ssh
 | `remote_alias:name` | Set alias for the most recent `remote_host` |
 | `remote_port:port` | Set SSH port for the most recent `remote_host` |
 | `remote_attach:ssh\|mosh` | Set attach method for the most recent `remote_host` |
+| `remote_project:name` | Define a reusable remote project name |
+| `remote_project_host:host-or-alias` | Set host/alias for the most recent `remote_project` |
+| `remote_project_dir:path` | Set remote working directory for the most recent `remote_project` |
+| `remote_project_session:name` | Set tmux session name for the most recent `remote_project` |
 
 ## Shell Completions
 

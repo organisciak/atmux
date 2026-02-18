@@ -16,6 +16,7 @@ The remote executor enables `atmux` commands to target tmux sessions that exist 
 The currently exposed CLI feature is:
 
 - `atmux send --remote=... <target> <text>`
+- `atmux remote-project [name] --host <host-or-alias> --dir <remote-dir> [--session <name>]`
 
 Examples:
 
@@ -75,12 +76,18 @@ There is shared command-side plumbing for building executors from config (`cmd/r
 At the moment:
 
 - `atmux send --remote` is the active remote workflow
+- `atmux remote-project` writes reusable remote project entries to global config
 - full remote session listing/attach via standard commands is not yet fully wired end-to-end
 - remote host aliases are configurable via `.agent-tmux.conf` and global config directives:
   - `remote_host:...`
   - `remote_alias:...`
   - `remote_port:...`
   - `remote_attach:ssh|mosh`
+- remote projects are configurable via global config directives:
+  - `remote_project:...`
+  - `remote_project_host:...`
+  - `remote_project_dir:...`
+  - `remote_project_session:...`
 
 ## Prerequisites
 
