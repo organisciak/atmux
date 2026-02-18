@@ -64,6 +64,7 @@ func newOnboardModel() onboardModel {
 		agents: []agentChoice{
 			{name: "Claude", command: "claude", enabled: true, yolo: true},
 			{name: "Codex", command: "codex", enabled: true, yolo: true},
+			{name: "Gemini CLI", command: "gemini", enabled: false, yolo: false},
 		},
 	}
 }
@@ -95,7 +96,9 @@ func (m onboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "down", "j":
 			m.cursor++
-			m.cursor = m.clampCursor()
+			if max := m.maxCursor(); m.cursor > max {
+				m.cursor = max
+			}
 			return m, nil
 
 		case "space":
@@ -115,18 +118,6 @@ func (m onboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m onboardModel) clampCursor() int {
-	max := m.maxCursor()
-	c := m.cursor
-	if c > max {
-		c = max
-	}
-	if c < 0 {
-		c = 0
-	}
-	return c
-}
-
 func (m onboardModel) maxCursor() int {
 	switch m.step {
 	case 1: // Agent selection
@@ -140,7 +131,7 @@ func (m onboardModel) maxCursor() int {
 		}
 		return count // each enabled agent has a YOLO toggle + Continue
 	case 3: // Confirm
-		return 1 // Save and Continue buttons
+		return 2 // Save & Continue, Save & Edit, Skip
 	case 4: // Keybind
 		return 1 // Yes and No buttons
 	default:
@@ -179,14 +170,21 @@ func (m onboardModel) handleEnter() (tea.Model, tea.Cmd) {
 
 	case 3: // Confirm
 		if m.cursor == 0 {
-			// Save
+			// Save & Continue
 			if err := m.saveConfig(); err != nil {
-				// Show error but continue
 				fmt.Fprintf(os.Stderr, "Warning: failed to save config: %v\n", err)
 			}
 			m.completed = true
-			// Move to keybinding step
 			m.step = 4
+			m.cursor = 0
+			return m, nil
+		} else if m.cursor == 1 {
+			// Save & Edit - save config then go back to agent selection
+			if err := m.saveConfig(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save config: %v\n", err)
+			}
+			m.completed = true
+			m.step = 1
 			m.cursor = 0
 			return m, nil
 		}
@@ -252,6 +250,7 @@ func (m onboardModel) buildAgents() []config.AgentConfig {
 			} else if a.command == "codex" {
 				cmd += " --yolo"
 			}
+			// Gemini CLI: no known yolo flag yet, use base command as-is
 		}
 		if a.flags != "" {
 			cmd += " " + a.flags
@@ -373,6 +372,20 @@ func (m onboardModel) viewAgentSelection() string {
 		lines = append(lines, line)
 	}
 
+	// Show caution footnote if Gemini is enabled
+	geminiEnabled := false
+	for _, agent := range m.agents {
+		if agent.command == "gemini" && agent.enabled {
+			geminiEnabled = true
+			break
+		}
+	}
+	if geminiEnabled {
+		lines = append(lines, "")
+		cautionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+		lines = append(lines, cautionStyle.Render("⚠ Gemini CLI support is experimental and has not been extensively tested."))
+	}
+
 	lines = append(lines, "")
 	continueBtn := "  Continue →"
 	if m.cursor == len(m.agents) {
@@ -412,6 +425,8 @@ func (m onboardModel) viewFlags() string {
 			yoloLabel = "--dangerously-skip-permissions"
 		} else if agent.command == "codex" {
 			yoloLabel = "--yolo"
+		} else if agent.command == "gemini" {
+			yoloLabel = "Auto-approve (not yet supported)"
 		}
 
 		checkbox := "[ ]"
@@ -469,14 +484,18 @@ func (m onboardModel) viewConfirm() string {
 	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("  "+path))
 	lines = append(lines, "")
 
-	saveBtn := "  Save and Continue"
+	saveBtn := "  Save & Continue"
+	editBtn := "  Save & Edit"
 	skipBtn := "  Skip (don't save)"
 	if m.cursor == 0 {
-		saveBtn = selectedStyle.Render("> Save and Continue")
+		saveBtn = selectedStyle.Render("> Save & Continue")
+	} else if m.cursor == 1 {
+		editBtn = selectedStyle.Render("> Save & Edit")
 	} else {
 		skipBtn = selectedStyle.Render("> Skip (don't save)")
 	}
 	lines = append(lines, saveBtn)
+	lines = append(lines, editBtn)
 	lines = append(lines, skipBtn)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
