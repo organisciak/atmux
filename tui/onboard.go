@@ -95,7 +95,7 @@ func (m onboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "down", "j":
 			m.cursor++
-			m.clampCursor()
+			m.cursor = m.clampCursor()
 			return m, nil
 
 		case "space":
@@ -115,14 +115,16 @@ func (m onboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *onboardModel) clampCursor() {
+func (m onboardModel) clampCursor() int {
 	max := m.maxCursor()
-	if m.cursor > max {
-		m.cursor = max
+	c := m.cursor
+	if c > max {
+		c = max
 	}
-	if m.cursor < 0 {
-		m.cursor = 0
+	if c < 0 {
+		c = 0
 	}
+	return c
 }
 
 func (m onboardModel) maxCursor() int {
@@ -207,7 +209,7 @@ func (m onboardModel) handleEnter() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *onboardModel) handleSpace() (tea.Model, tea.Cmd) {
+func (m onboardModel) handleSpace() (tea.Model, tea.Cmd) {
 	switch m.step {
 	case 1: // Toggle agent enabled
 		if m.cursor < len(m.agents) {
@@ -228,7 +230,7 @@ func (m *onboardModel) handleSpace() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *onboardModel) handleTab() (tea.Model, tea.Cmd) {
+func (m onboardModel) handleTab() (tea.Model, tea.Cmd) {
 	// Tab cycles through steps forward
 	if m.step < 3 {
 		m.step++
@@ -248,7 +250,7 @@ func (m onboardModel) buildAgents() []config.AgentConfig {
 			if a.command == "claude" {
 				cmd += " --dangerously-skip-permissions"
 			} else if a.command == "codex" {
-				cmd += " --full-auto"
+				cmd += " --yolo"
 			}
 		}
 		if a.flags != "" {
@@ -329,6 +331,7 @@ func (m onboardModel) viewWelcome() string {
 		"",
 		subtitleStyle.Render("You can always change these settings later by running:"),
 		subtitleStyle.Render("  atmux init --global"),
+		subtitleStyle.Render("or by editing your .agent-tmux.conf file directly."),
 		"",
 		selectedStyle.Render("Press Enter to continue"),
 	)
@@ -408,7 +411,7 @@ func (m onboardModel) viewFlags() string {
 		if agent.command == "claude" {
 			yoloLabel = "--dangerously-skip-permissions"
 		} else if agent.command == "codex" {
-			yoloLabel = "--full-auto"
+			yoloLabel = "--yolo"
 		}
 
 		checkbox := "[ ]"
