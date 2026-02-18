@@ -11,37 +11,40 @@ import (
 	"github.com/porganisciak/agent-tmux/tmux"
 )
 
-// WizardStep represents a step in the schedule wizard
-type WizardStep int
+// FormField identifies which section of the form is focused
+type FormField int
 
 const (
-	WizardStepSchedule WizardStep = iota
-	WizardStepTarget
-	WizardStepCommand
-	WizardStepPreAction
-	WizardStepConfirm
+	FieldSchedule FormField = iota
+	FieldTarget
+	FieldCommand
+	FieldName
+	FieldPreAction
+	FieldButtons
 )
 
-// scheduleWizardModel handles the add/edit flow for scheduled jobs
+// scheduleWizardModel handles the add/edit flow for scheduled jobs as a
+// single-screen form.  All fields are visible simultaneously; Tab/Shift-Tab
+// moves focus between sections.
 type scheduleWizardModel struct {
-	// Current step
-	step WizardStep
+	// Focus management
+	focusedField FormField
 
 	// Schedule selection
-	presets       []config.CronPreset
-	presetIndex   int
-	customCron    textinput.Model
-	usingCustom   bool
-	cronFields    [5]string // For custom cron entry
-	cronFieldIdx  int
-	cronValid     bool
-	cronError     string
+	presets      []config.CronPreset
+	presetIndex  int
+	usingCustom  bool
+	cronFields   [5]string
+	cronFieldIdx int
+	cronValid    bool
+	cronError    string
 
 	// Target selection
-	tree         *tmux.Tree
-	flatNodes    []*tmux.TreeNode
-	targetIndex  int
-	targetExpand map[string]bool
+	tree           *tmux.Tree
+	flatNodes      []*tmux.TreeNode
+	targetIndex    int
+	targetExpand   map[string]bool
+	selectedTarget string // stored target string for display when unfocused
 
 	// Command input
 	commandInput textinput.Model
@@ -52,8 +55,8 @@ type scheduleWizardModel struct {
 	preActionIndex  int
 	preActionLabels []string
 
-	// Confirm step
-	confirmFocusIdx int // 0=save, 1=cancel
+	// Buttons
+	buttonFocusIdx int // 0=save, 1=cancel
 
 	// State
 	width     int
@@ -64,11 +67,6 @@ type scheduleWizardModel struct {
 }
 
 func newScheduleWizardModel(existingJob *config.ScheduledJob) *scheduleWizardModel {
-	customInput := textinput.New()
-	customInput.Placeholder = "* * * * * (min hour day month weekday)"
-	customInput.CharLimit = 50
-	customInput.Width = 40
-
 	cmdInput := textinput.New()
 	cmdInput.Placeholder = "Command to send..."
 	cmdInput.CharLimit = 256
@@ -91,10 +89,9 @@ func newScheduleWizardModel(existingJob *config.ScheduledJob) *scheduleWizardMod
 	}
 
 	m := &scheduleWizardModel{
-		step:            WizardStepSchedule,
+		focusedField:    FieldSchedule,
 		presets:         config.GetCronPresets(),
 		presetIndex:     0,
-		customCron:      customInput,
 		cronFields:      [5]string{"*", "*", "*", "*", "*"},
 		commandInput:    cmdInput,
 		nameInput:       nameInput,
@@ -121,7 +118,6 @@ func newScheduleWizardModel(existingJob *config.ScheduledJob) *scheduleWizardMod
 		if !found {
 			m.presetIndex = len(m.presets) - 1 // Custom
 			m.usingCustom = true
-			m.customCron.SetValue(existingJob.CronExpr)
 			fields := strings.Fields(existingJob.CronExpr)
 			if len(fields) == 5 {
 				for i := 0; i < 5; i++ {
@@ -137,6 +133,9 @@ func newScheduleWizardModel(existingJob *config.ScheduledJob) *scheduleWizardMod
 				break
 			}
 		}
+
+		// Store the target for display
+		m.selectedTarget = existingJob.Target
 	}
 
 	return m
@@ -168,6 +167,10 @@ func (m scheduleWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.tree = msg.tree
 			m.rebuildFlatNodes()
+			// If we have a pre-selected target (editing), find it in the tree
+			if m.selectedTarget != "" {
+				m.selectTargetByString(m.selectedTarget)
+			}
 		}
 		return m, nil
 
@@ -180,17 +183,14 @@ func (m scheduleWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyMsg(msg)
 	}
 
-	// Update text inputs if active
-	if m.step == WizardStepSchedule && m.usingCustom {
-		var cmd tea.Cmd
-		m.customCron, cmd = m.customCron.Update(msg)
-		cmds = append(cmds, cmd)
-		m.validateCron()
-	}
-	if m.step == WizardStepCommand {
+	// Update text inputs if they are focused
+	if m.focusedField == FieldCommand && m.commandInput.Focused() {
 		var cmd tea.Cmd
 		m.commandInput, cmd = m.commandInput.Update(msg)
 		cmds = append(cmds, cmd)
+	}
+	if m.focusedField == FieldName && m.nameInput.Focused() {
+		var cmd tea.Cmd
 		m.nameInput, cmd = m.nameInput.Update(msg)
 		cmds = append(cmds, cmd)
 	}
@@ -198,47 +198,146 @@ func (m scheduleWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// selectTargetByString expands the tree to reveal and select a target pane
+func (m *scheduleWizardModel) selectTargetByString(target string) {
+	if m.tree == nil || target == "" {
+		return
+	}
+	// Expand all sessions and windows to find the target
+	for _, sess := range m.tree.Sessions {
+		sessKey := "session:" + sess.Name
+		for _, win := range sess.Windows {
+			winTarget := fmt.Sprintf("%s:%d", sess.Name, win.Index)
+			for _, pane := range win.Panes {
+				if pane.Target == target {
+					m.targetExpand[sessKey] = true
+					winKey := "window:" + winTarget
+					m.targetExpand[winKey] = true
+					m.rebuildFlatNodes()
+					// Find the pane in flatNodes
+					for i, node := range m.flatNodes {
+						if node.Type == "pane" && node.Target == target {
+							m.targetIndex = i
+							return
+						}
+					}
+					return
+				}
+			}
+		}
+	}
+}
+
 func (m *scheduleWizardModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
 	// Global keys
-	switch msg.String() {
+	switch key {
 	case "ctrl+c":
 		m.done = true
 		m.cancelled = true
 		return *m, nil
 	case "esc":
-		if m.step == WizardStepSchedule {
-			m.done = true
-			m.cancelled = true
+		// If in a text input, blur it and stay in current field
+		if m.focusedField == FieldCommand && m.commandInput.Focused() {
+			m.commandInput.Blur()
 			return *m, nil
 		}
-		// Go back a step
-		if m.step > WizardStepSchedule {
-			m.step--
+		if m.focusedField == FieldName && m.nameInput.Focused() {
+			m.nameInput.Blur()
+			return *m, nil
 		}
+		// Otherwise cancel
+		m.done = true
+		m.cancelled = true
 		return *m, nil
 	}
 
-	// Step-specific handling
-	switch m.step {
-	case WizardStepSchedule:
-		return m.handleScheduleStep(msg)
-	case WizardStepTarget:
-		return m.handleTargetStep(msg)
-	case WizardStepCommand:
-		return m.handleCommandStep(msg)
-	case WizardStepPreAction:
-		return m.handlePreActionStep(msg)
-	case WizardStepConfirm:
-		return m.handleConfirmStep(msg)
+	// Tab / Shift-Tab for section navigation (except when in custom cron mode
+	// where tab cycles cron fields)
+	if key == "tab" && !(m.focusedField == FieldSchedule && m.usingCustom) {
+		m.blurInputs()
+		m.focusedField++
+		if m.focusedField > FieldButtons {
+			m.focusedField = FieldSchedule
+		}
+		m.onFieldFocus()
+		return *m, m.focusCmd()
+	}
+	if key == "shift+tab" && !(m.focusedField == FieldSchedule && m.usingCustom) {
+		m.blurInputs()
+		if m.focusedField == FieldSchedule {
+			m.focusedField = FieldButtons
+		} else {
+			m.focusedField--
+		}
+		m.onFieldFocus()
+		return *m, m.focusCmd()
+	}
+
+	// Delegate to section-specific handlers
+	switch m.focusedField {
+	case FieldSchedule:
+		return m.handleScheduleField(msg)
+	case FieldTarget:
+		return m.handleTargetField(msg)
+	case FieldCommand:
+		return m.handleCommandField(msg)
+	case FieldName:
+		return m.handleNameField(msg)
+	case FieldPreAction:
+		return m.handlePreActionField(msg)
+	case FieldButtons:
+		return m.handleButtonsField(msg)
 	}
 
 	return *m, nil
 }
 
-func (m *scheduleWizardModel) handleScheduleStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// blurInputs blurs all text inputs
+func (m *scheduleWizardModel) blurInputs() {
+	m.commandInput.Blur()
+	m.nameInput.Blur()
+}
+
+// onFieldFocus is called when a field gains focus
+func (m *scheduleWizardModel) onFieldFocus() {
+	switch m.focusedField {
+	case FieldCommand:
+		m.commandInput.Focus()
+	case FieldName:
+		m.nameInput.Focus()
+	case FieldTarget:
+		// Update selectedTarget from current tree selection
+		m.updateSelectedTarget()
+	}
+}
+
+// focusCmd returns the appropriate tea.Cmd for the newly focused field
+func (m *scheduleWizardModel) focusCmd() tea.Cmd {
+	if m.focusedField == FieldCommand || m.focusedField == FieldName {
+		return textinput.Blink
+	}
+	return nil
+}
+
+// updateSelectedTarget stores the currently selected target string
+func (m *scheduleWizardModel) updateSelectedTarget() {
+	if m.targetIndex >= 0 && m.targetIndex < len(m.flatNodes) {
+		node := m.flatNodes[m.targetIndex]
+		if node.Type == "pane" {
+			m.selectedTarget = node.Target
+		}
+	}
+}
+
+// --- Schedule field ---
+
+func (m *scheduleWizardModel) handleScheduleField(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
 	if m.usingCustom {
-		// In custom cron entry mode
-		switch msg.String() {
+		switch key {
 		case "tab":
 			m.cronFieldIdx = (m.cronFieldIdx + 1) % 5
 			return *m, nil
@@ -252,19 +351,28 @@ func (m *scheduleWizardModel) handleScheduleStep(msg tea.KeyMsg) (tea.Model, tea
 			m.incrementCronField(-1)
 			return *m, nil
 		case "backspace":
-			// Go back to preset selection
-			m.usingCustom = false
-			m.customCron.Blur()
+			// If the field has content beyond a single char, trim the last char
+			f := m.cronFields[m.cronFieldIdx]
+			if len(f) > 1 {
+				m.cronFields[m.cronFieldIdx] = f[:len(f)-1]
+				m.validateCron()
+			} else {
+				// Reset to wildcard and go back to preset mode
+				m.cronFields[m.cronFieldIdx] = "*"
+				m.usingCustom = false
+			}
 			return *m, nil
 		case "enter":
+			// Enter in custom cron mode moves to next section if valid
 			if m.cronValid {
-				m.step = WizardStepTarget
+				m.blurInputs()
+				m.focusedField = FieldTarget
+				m.onFieldFocus()
 			}
 			return *m, nil
 		default:
-			// Handle typing in current field
-			if len(msg.String()) == 1 {
-				char := msg.String()[0]
+			if len(key) == 1 {
+				char := key[0]
 				if (char >= '0' && char <= '9') || char == '*' || char == '/' || char == '-' || char == ',' {
 					if m.cronFields[m.cronFieldIdx] == "*" {
 						m.cronFields[m.cronFieldIdx] = string(char)
@@ -279,7 +387,7 @@ func (m *scheduleWizardModel) handleScheduleStep(msg tea.KeyMsg) (tea.Model, tea
 	}
 
 	// Preset selection mode
-	switch msg.String() {
+	switch key {
 	case "up", "k":
 		if m.presetIndex > 0 {
 			m.presetIndex--
@@ -294,17 +402,19 @@ func (m *scheduleWizardModel) handleScheduleStep(msg tea.KeyMsg) (tea.Model, tea
 		if m.presets[m.presetIndex].Expr == "" {
 			// Custom selected
 			m.usingCustom = true
-			m.customCron.Focus()
-			return *m, textinput.Blink
+			return *m, nil
 		}
-		m.step = WizardStepTarget
+		// Selecting a preset just selects it; doesn't advance
 		return *m, nil
 	}
 	return *m, nil
 }
 
-func (m *scheduleWizardModel) handleTargetStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+// --- Target field ---
+
+func (m *scheduleWizardModel) handleTargetField(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
 	case "up", "k":
 		if m.targetIndex > 0 {
 			m.targetIndex--
@@ -320,8 +430,8 @@ func (m *scheduleWizardModel) handleTargetStep(msg tea.KeyMsg) (tea.Model, tea.C
 		if m.targetIndex >= 0 && m.targetIndex < len(m.flatNodes) {
 			node := m.flatNodes[m.targetIndex]
 			if node.Type == "session" || node.Type == "window" {
-				key := node.Type + ":" + node.Target
-				m.targetExpand[key] = !m.targetExpand[key]
+				nodeKey := node.Type + ":" + node.Target
+				m.targetExpand[nodeKey] = !m.targetExpand[nodeKey]
 				m.rebuildFlatNodes()
 			}
 		}
@@ -330,14 +440,13 @@ func (m *scheduleWizardModel) handleTargetStep(msg tea.KeyMsg) (tea.Model, tea.C
 		if m.targetIndex >= 0 && m.targetIndex < len(m.flatNodes) {
 			node := m.flatNodes[m.targetIndex]
 			if node.Type == "pane" {
-				// Pane selected, move to next step
-				m.step = WizardStepCommand
-				m.commandInput.Focus()
-				return *m, textinput.Blink
+				// Select pane and store it
+				m.selectedTarget = node.Target
+				return *m, nil
 			}
 			// Toggle expand for non-panes
-			key := node.Type + ":" + node.Target
-			m.targetExpand[key] = !m.targetExpand[key]
+			nodeKey := node.Type + ":" + node.Target
+			m.targetExpand[nodeKey] = !m.targetExpand[nodeKey]
 			m.rebuildFlatNodes()
 		}
 		return *m, nil
@@ -345,38 +454,44 @@ func (m *scheduleWizardModel) handleTargetStep(msg tea.KeyMsg) (tea.Model, tea.C
 	return *m, nil
 }
 
-func (m *scheduleWizardModel) handleCommandStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "tab":
-		// Toggle between name and command input
-		if m.commandInput.Focused() {
-			m.commandInput.Blur()
-			m.nameInput.Focus()
-		} else {
-			m.nameInput.Blur()
-			m.commandInput.Focus()
-		}
+// --- Command field ---
+
+func (m *scheduleWizardModel) handleCommandField(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	if key == "enter" {
+		// Move to next field instead of submitting
+		m.blurInputs()
+		m.focusedField = FieldName
+		m.onFieldFocus()
 		return *m, textinput.Blink
-	case "enter":
-		if m.commandInput.Value() != "" {
-			m.commandInput.Blur()
-			m.nameInput.Blur()
-			m.step = WizardStepPreAction
-		}
-		return *m, nil
 	}
-	// Update text input
+	// Pass through to text input
 	var cmd tea.Cmd
-	if m.commandInput.Focused() {
-		m.commandInput, cmd = m.commandInput.Update(msg)
-	} else {
-		m.nameInput, cmd = m.nameInput.Update(msg)
-	}
+	m.commandInput, cmd = m.commandInput.Update(msg)
 	return *m, cmd
 }
 
-func (m *scheduleWizardModel) handlePreActionStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+// --- Name field ---
+
+func (m *scheduleWizardModel) handleNameField(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	if key == "enter" {
+		// Move to next field
+		m.blurInputs()
+		m.focusedField = FieldPreAction
+		m.onFieldFocus()
+		return *m, nil
+	}
+	var cmd tea.Cmd
+	m.nameInput, cmd = m.nameInput.Update(msg)
+	return *m, cmd
+}
+
+// --- Pre-action field ---
+
+func (m *scheduleWizardModel) handlePreActionField(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
 	case "up", "k":
 		if m.preActionIndex > 0 {
 			m.preActionIndex--
@@ -388,26 +503,27 @@ func (m *scheduleWizardModel) handlePreActionStep(msg tea.KeyMsg) (tea.Model, te
 		}
 		return *m, nil
 	case "enter":
-		m.step = WizardStepConfirm
+		// Move to buttons
+		m.focusedField = FieldButtons
 		return *m, nil
 	}
 	return *m, nil
 }
 
-func (m *scheduleWizardModel) handleConfirmStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+// --- Buttons field ---
+
+func (m *scheduleWizardModel) handleButtonsField(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
 	case "left", "h":
-		m.confirmFocusIdx = 0
+		m.buttonFocusIdx = 0
 		return *m, nil
 	case "right", "l":
-		m.confirmFocusIdx = 1
-		return *m, nil
-	case "tab":
-		m.confirmFocusIdx = (m.confirmFocusIdx + 1) % 2
+		m.buttonFocusIdx = 1
 		return *m, nil
 	case "enter":
 		m.done = true
-		m.cancelled = m.confirmFocusIdx == 1
+		m.cancelled = m.buttonFocusIdx == 1
 		return *m, nil
 	case "s":
 		m.done = true
@@ -420,6 +536,8 @@ func (m *scheduleWizardModel) handleConfirmStep(msg tea.KeyMsg) (tea.Model, tea.
 	}
 	return *m, nil
 }
+
+// --- Shared helpers (unchanged from original) ---
 
 func (m *scheduleWizardModel) validateCron() {
 	expr := strings.Join(m.cronFields[:], " ")
@@ -441,7 +559,6 @@ func (m *scheduleWizardModel) incrementCronField(delta int) {
 		return
 	}
 
-	// Try to parse as number
 	var num int
 	_, err := fmt.Sscanf(field, "%d", &num)
 	if err != nil {
@@ -539,9 +656,12 @@ func (m *scheduleWizardModel) buildJob() config.ScheduledJob {
 		cronExpr = m.presets[m.presetIndex].Expr
 	}
 
-	var target string
-	if m.targetIndex >= 0 && m.targetIndex < len(m.flatNodes) {
-		target = m.flatNodes[m.targetIndex].Target
+	target := m.selectedTarget
+	if target == "" && m.targetIndex >= 0 && m.targetIndex < len(m.flatNodes) {
+		node := m.flatNodes[m.targetIndex]
+		if node.Type == "pane" {
+			target = node.Target
+		}
 	}
 
 	return config.ScheduledJob{
@@ -555,6 +675,29 @@ func (m *scheduleWizardModel) buildJob() config.ScheduledJob {
 	}
 }
 
+// ── View ────────────────────────────────────────────────────────────────
+
+// Styles local to the form rendering
+var (
+	formSectionFocusedBorder = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(primaryColor).
+				Padding(0, 1)
+
+	formSectionUnfocusedStyle = lipgloss.NewStyle().
+					PaddingLeft(2)
+
+	formSectionLabelFocused = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(primaryColor)
+
+	formSectionLabelUnfocused = lipgloss.NewStyle().
+					Foreground(dimColor)
+
+	formSummaryValue = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("252"))
+)
+
 func (m scheduleWizardModel) View() string {
 	var sections []string
 
@@ -565,59 +708,43 @@ func (m scheduleWizardModel) View() string {
 	}
 	title := schedTitleStyle.Render(fmt.Sprintf("%s Scheduled Job", editMode))
 	sections = append(sections, title)
-
-	// Step indicator
-	steps := []string{"Schedule", "Target", "Command", "Pre-action", "Confirm"}
-	stepIndicator := m.renderStepIndicator(steps)
-	sections = append(sections, stepIndicator)
 	sections = append(sections, "")
 
-	// Current step content
-	switch m.step {
-	case WizardStepSchedule:
-		sections = append(sections, m.renderScheduleStep()...)
-	case WizardStepTarget:
-		sections = append(sections, m.renderTargetStep()...)
-	case WizardStepCommand:
-		sections = append(sections, m.renderCommandStep()...)
-	case WizardStepPreAction:
-		sections = append(sections, m.renderPreActionStep()...)
-	case WizardStepConfirm:
-		sections = append(sections, m.renderConfirmStep()...)
-	}
+	// Render each section
+	sections = append(sections, m.viewScheduleSection())
+	sections = append(sections, m.viewTargetSection())
+	sections = append(sections, m.viewCommandSection())
+	sections = append(sections, m.viewNameSection())
+	sections = append(sections, m.viewPreActionSection())
+	sections = append(sections, "")
+	sections = append(sections, m.viewButtons())
 
 	// Navigation hint
 	sections = append(sections, "")
-	sections = append(sections, schedHintStyle.Render("[Esc] back [Enter] next"))
+	hint := "[Tab] next section [Shift+Tab] prev [Esc] cancel"
+	sections = append(sections, schedHintStyle.Render(hint))
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
-func (m scheduleWizardModel) renderStepIndicator(steps []string) string {
-	var parts []string
-	for i, step := range steps {
-		style := schedHintStyle
-		if i == int(m.step) {
-			style = schedTitleStyle
-		}
-		parts = append(parts, style.Render(step))
-		if i < len(steps)-1 {
-			parts = append(parts, schedHintStyle.Render(" > "))
-		}
+// --- Schedule section ---
+
+func (m scheduleWizardModel) viewScheduleSection() string {
+	focused := m.focusedField == FieldSchedule
+
+	if !focused {
+		// Compact summary line
+		label := formSectionLabelUnfocused.Render("Schedule: ")
+		value := formSummaryValue.Render(m.scheduleDisplayValue())
+		return formSectionUnfocusedStyle.Render(label + value)
 	}
-	return strings.Join(parts, "")
-}
 
-func (m scheduleWizardModel) renderScheduleStep() []string {
+	// Expanded view
 	var lines []string
-
-	subtitle := wizSubtitleStyle.Render("When should this command run?")
-	lines = append(lines, subtitle)
-	lines = append(lines, "")
+	header := formSectionLabelFocused.Render("Schedule")
 
 	if m.usingCustom {
-		// Custom cron entry
-		lines = append(lines, "Enter custom cron expression:")
+		lines = append(lines, header)
 		lines = append(lines, "")
 
 		// Field headers
@@ -669,9 +796,11 @@ func (m scheduleWizardModel) renderScheduleStep() []string {
 		}
 
 		lines = append(lines, "")
-		lines = append(lines, wizRefStyle.Render("[Tab] switch field [Up/Down] adjust [Backspace] go back"))
+		lines = append(lines, wizRefStyle.Render("[Tab] switch cron field [Up/Down] adjust [Backspace] back to presets"))
 	} else {
-		// Preset selection
+		lines = append(lines, header)
+		lines = append(lines, "")
+
 		for i, preset := range m.presets {
 			var row string
 			if i == m.presetIndex {
@@ -680,99 +809,158 @@ func (m scheduleWizardModel) renderScheduleStep() []string {
 				row = "  " + preset.Name
 			}
 			lines = append(lines, row)
-			if i == m.presetIndex {
+			if i == m.presetIndex && preset.Description != "" {
 				lines = append(lines, "    "+wizSubtitleStyle.Render(preset.Description))
 			}
 		}
 	}
 
-	return lines
+	content := strings.Join(lines, "\n")
+	return formSectionFocusedBorder.Render(content)
 }
 
-func (m scheduleWizardModel) renderTargetStep() []string {
-	var lines []string
+func (m scheduleWizardModel) scheduleDisplayValue() string {
+	if m.usingCustom {
+		expr := strings.Join(m.cronFields[:], " ")
+		if m.cronValid {
+			return config.CronToEnglish(expr)
+		}
+		return expr + " (invalid)"
+	}
+	return m.presets[m.presetIndex].Name
+}
 
-	subtitle := wizSubtitleStyle.Render("Which pane should receive the command?")
-	lines = append(lines, subtitle)
+// --- Target section ---
+
+func (m scheduleWizardModel) viewTargetSection() string {
+	focused := m.focusedField == FieldTarget
+
+	if !focused {
+		label := formSectionLabelUnfocused.Render("Target: ")
+		target := m.selectedTarget
+		if target == "" {
+			target = "(none selected)"
+		}
+		value := formSummaryValue.Render(target)
+		return formSectionUnfocusedStyle.Render(label + value)
+	}
+
+	// Expanded tree view
+	var lines []string
+	header := formSectionLabelFocused.Render("Target Pane")
+	lines = append(lines, header)
 	lines = append(lines, "")
 
 	if len(m.flatNodes) == 0 {
-		lines = append(lines, schedHintStyle.Render("No tmux sessions found. Start a tmux session first."))
-		return lines
-	}
-
-	// Tree view
-	maxDisplay := 15
-	for i, node := range m.flatNodes {
-		if i >= maxDisplay {
-			lines = append(lines, schedHintStyle.Render(fmt.Sprintf("... and %d more", len(m.flatNodes)-maxDisplay)))
-			break
-		}
-
-		indent := strings.Repeat("  ", node.Level)
-		icon := getNodeIcon(node.Type, node.Expanded, node.Active)
-		name := node.Name
-
-		var row string
-		if i == m.targetIndex {
-			row = selectedStyle.Render("> " + indent + icon + " " + name)
+		if m.tree == nil {
+			lines = append(lines, schedHintStyle.Render("Loading tmux sessions..."))
 		} else {
-			row = "  " + indent + icon + " " + name
+			lines = append(lines, schedHintStyle.Render("No tmux sessions found. Start a tmux session first."))
 		}
-
-		// Highlight panes differently
-		if node.Type == "pane" {
-			if i == m.targetIndex {
-				row += schedTargetStyle.Render(" <- select this")
+	} else {
+		maxDisplay := 12
+		for i, node := range m.flatNodes {
+			if i >= maxDisplay {
+				lines = append(lines, schedHintStyle.Render(fmt.Sprintf("... and %d more", len(m.flatNodes)-maxDisplay)))
+				break
 			}
-		}
 
-		lines = append(lines, row)
+			indent := strings.Repeat("  ", node.Level)
+			icon := getNodeIcon(node.Type, node.Expanded, node.Active)
+			name := node.Name
+
+			var row string
+			if i == m.targetIndex {
+				row = selectedStyle.Render("> " + indent + icon + " " + name)
+				if node.Type == "pane" {
+					row += schedTargetStyle.Render(" <- select")
+				}
+			} else {
+				row = "  " + indent + icon + " " + name
+			}
+
+			lines = append(lines, row)
+		}
+		lines = append(lines, "")
+		lines = append(lines, wizRefStyle.Render("[Space/Enter] expand [Enter on pane] select"))
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, wizRefStyle.Render("[Space/Enter] expand [Enter on pane] select"))
-
-	return lines
+	content := strings.Join(lines, "\n")
+	return formSectionFocusedBorder.Render(content)
 }
 
-func (m scheduleWizardModel) renderCommandStep() []string {
+// --- Command section ---
+
+func (m scheduleWizardModel) viewCommandSection() string {
+	focused := m.focusedField == FieldCommand
+
+	if !focused {
+		label := formSectionLabelUnfocused.Render("Command: ")
+		cmd := m.commandInput.Value()
+		if cmd == "" {
+			cmd = "(empty)"
+		}
+		value := formSummaryValue.Render(cmd)
+		return formSectionUnfocusedStyle.Render(label + value)
+	}
+
 	var lines []string
+	header := formSectionLabelFocused.Render("Command")
+	lines = append(lines, header)
 
-	subtitle := wizSubtitleStyle.Render("What command should be sent?")
-	lines = append(lines, subtitle)
-	lines = append(lines, "")
-
-	// Command input
-	cmdLabel := wizLabelStyle.Render("Command:")
 	cmdStyle := wizInputStyle
 	if m.commandInput.Focused() {
 		cmdStyle = cmdStyle.BorderForeground(activeColor)
 	}
-	lines = append(lines, cmdLabel)
 	lines = append(lines, cmdStyle.Render(m.commandInput.View()))
-	lines = append(lines, "")
 
-	// Optional name
-	nameLabel := wizLabelStyle.Render("Name (optional):")
+	content := strings.Join(lines, "\n")
+	return formSectionFocusedBorder.Render(content)
+}
+
+// --- Name section ---
+
+func (m scheduleWizardModel) viewNameSection() string {
+	focused := m.focusedField == FieldName
+
+	if !focused {
+		label := formSectionLabelUnfocused.Render("Name: ")
+		name := m.nameInput.Value()
+		if name == "" {
+			name = "(optional)"
+		}
+		value := formSummaryValue.Render(name)
+		return formSectionUnfocusedStyle.Render(label + value)
+	}
+
+	var lines []string
+	header := formSectionLabelFocused.Render("Name (optional)")
+	lines = append(lines, header)
+
 	nameStyle := wizInputStyle
 	if m.nameInput.Focused() {
 		nameStyle = nameStyle.BorderForeground(activeColor)
 	}
-	lines = append(lines, nameLabel)
 	lines = append(lines, nameStyle.Render(m.nameInput.View()))
 
-	lines = append(lines, "")
-	lines = append(lines, wizRefStyle.Render("[Tab] switch field [Enter] continue"))
-
-	return lines
+	content := strings.Join(lines, "\n")
+	return formSectionFocusedBorder.Render(content)
 }
 
-func (m scheduleWizardModel) renderPreActionStep() []string {
-	var lines []string
+// --- Pre-action section ---
 
-	subtitle := wizSubtitleStyle.Render("What should happen before sending the command?")
-	lines = append(lines, subtitle)
+func (m scheduleWizardModel) viewPreActionSection() string {
+	focused := m.focusedField == FieldPreAction
+
+	if !focused {
+		label := formSectionLabelUnfocused.Render("Pre-Action: ")
+		value := formSummaryValue.Render(m.preActionLabels[m.preActionIndex])
+		return formSectionUnfocusedStyle.Render(label + value)
+	}
+
+	var lines []string
+	header := formSectionLabelFocused.Render("Pre-Action")
+	lines = append(lines, header)
 	lines = append(lines, "")
 
 	for i, label := range m.preActionLabels {
@@ -785,59 +973,29 @@ func (m scheduleWizardModel) renderPreActionStep() []string {
 		lines = append(lines, row)
 	}
 
-	return lines
+	content := strings.Join(lines, "\n")
+	return formSectionFocusedBorder.Render(content)
 }
 
-func (m scheduleWizardModel) renderConfirmStep() []string {
-	var lines []string
+// --- Buttons ---
 
-	subtitle := wizSubtitleStyle.Render("Review and confirm")
-	lines = append(lines, subtitle)
-	lines = append(lines, "")
+func (m scheduleWizardModel) viewButtons() string {
+	focused := m.focusedField == FieldButtons
 
-	// Summary box
-	var cronExpr string
-	if m.usingCustom {
-		cronExpr = strings.Join(m.cronFields[:], " ")
+	var saveBtn, cancelBtn string
+	if focused {
+		if m.buttonFocusIdx == 0 {
+			saveBtn = wizSaveBtnActiveStyle.Render(" Save ")
+			cancelBtn = wizCancelBtnStyle.Render(" Cancel ")
+		} else {
+			saveBtn = wizSaveBtnInactiveStyle.Render(" Save ")
+			cancelBtn = wizCancelBtnActiveStyle.Render(" Cancel ")
+		}
 	} else {
-		cronExpr = m.presets[m.presetIndex].Expr
+		saveBtn = wizSaveBtnInactiveStyle.Render(" Save ")
+		cancelBtn = wizCancelBtnStyle.Render(" Cancel ")
 	}
 
-	var target string
-	if m.targetIndex >= 0 && m.targetIndex < len(m.flatNodes) {
-		target = m.flatNodes[m.targetIndex].Target
-	}
-
-	summaryLines := []string{
-		wizLabelStyle.Render("Schedule: ") + wizValueStyle.Render(config.CronToEnglish(cronExpr)),
-		wizLabelStyle.Render("Next run: ") + wizValueStyle.Render(config.FormatNextRun(cronExpr)),
-		wizLabelStyle.Render("Target:   ") + wizValueStyle.Render(target),
-		wizLabelStyle.Render("Command:  ") + wizValueStyle.Render(m.commandInput.Value()),
-		wizLabelStyle.Render("Pre-action: ") + wizValueStyle.Render(m.preActionLabels[m.preActionIndex]),
-	}
-
-	if m.nameInput.Value() != "" {
-		summaryLines = append([]string{
-			wizLabelStyle.Render("Name:     ") + wizValueStyle.Render(m.nameInput.Value()),
-		}, summaryLines...)
-	}
-
-	summary := wizBoxStyle.Render(strings.Join(summaryLines, "\n"))
-	lines = append(lines, summary)
-	lines = append(lines, "")
-
-	// Save/Cancel buttons
-	saveBtn := wizSaveBtnStyle.Render(" Save ")
-	cancelBtn := wizCancelBtnStyle.Render(" Cancel ")
-
-	if m.confirmFocusIdx == 0 {
-		saveBtn = wizSaveBtnActiveStyle.Render(" Save ")
-	} else {
-		cancelBtn = wizCancelBtnActiveStyle.Render(" Cancel ")
-	}
-
-	buttons := lipgloss.JoinHorizontal(lipgloss.Center, saveBtn, "  ", cancelBtn)
-	lines = append(lines, buttons)
-
-	return lines
+	buttons := lipgloss.JoinHorizontal(lipgloss.Center, "          ", saveBtn, "  ", cancelBtn)
+	return buttons
 }
