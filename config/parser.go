@@ -550,41 +550,81 @@ func DefaultTemplate() string {
 # Tips and docs: https://github.com/organisciak/atmux
 # This file configures windows and panes for your tmux session
 
-# Directives:
-#   agent:command   - Define a core agent pane (replaces defaults if set)
-#   agents:command  - Add an extra horizontal pane to the agents window
-#   vagents:command - Add an extra vertical pane to the agents window
-#   window:name     - Create a new window with the given name
-#   pane:command    - Add a horizontal pane to the current window
-#   vpane:command   - Add a vertical pane to the current window
-#   remote_host:... - Define a remote host for --remote alias resolution
-#   remote_alias:.. - Optional alias for the last remote_host
-#   remote_port:... - Optional SSH port for the last remote_host
-#   remote_attach:. - Optional attach method for the last remote_host (ssh|mosh)
+# ── Directive Reference ──────────────────────────────────────────────
+#   agent:command    - Define a core agent pane (replaces defaults if set)
+#   agents:command   - Add an extra horizontal pane to the agents window
+#   vagents:command  - Add an extra vertical pane to the agents window
+#   window:name      - Create a new window with the given name
+#   pane:command     - Add a horizontal split pane to the current window
+#   vpane:command    - Add a vertical split pane to the current window
+#   remote_host:...  - Define a remote host for --remote alias resolution
+#   remote_alias:..  - Optional alias for the last remote_host
+#   remote_port:...  - Optional SSH port for the last remote_host
+#   remote_attach:.  - Optional attach method for the last remote_host (ssh|mosh)
 #   remote_project:........ - Define a reusable remote project name
 #   remote_project_host:... - Host/alias for the last remote_project
 #   remote_project_dir:.... - Remote working dir for the last remote_project
 #   remote_project_session: - Optional tmux session name for the last remote_project
 
-# Example: Custom agent setup (overrides defaults)
+# ── Custom Agent Setup ───────────────────────────────────────────────
+# Override the default agent panes. When any agent: line is present,
+# it replaces the built-in defaults entirely.
+#
 # agent:claude --dangerously-skip-permissions
 # agent:codex --full-auto
 
-# Example: Development server window
-# window:dev
-# pane:pnpm dev
-# pane:pnpm run emulators
-
-# Example: Add monitoring to agents window
+# ── Extra Panes in the Agents Window ─────────────────────────────────
+# These panes are added alongside your agent panes in the first window.
+# Use "agents:" for a horizontal split (side-by-side) or
+# "vagents:" for a vertical split (top/bottom).
+#
 # agents:htop
+# vagents:tail -f /var/log/syslog
 
-# Example: Remote host alias (used with --remote=devbox)
+# ── Additional Windows ──────────────────────────────────────────────
+# Each "window:" directive creates a new tmux window. Panes defined
+# after it (with pane: or vpane:) are added to that window.
+#
+# --- Dev server window: run your app and bundler side by side ---
+# window:dev
+# pane:npm run dev
+# pane:npm run watch
+#
+# --- Logs window: tail multiple log files ---
+# window:logs
+# pane:tail -f ./logs/app.log
+# vpane:tail -f ./logs/error.log
+#
+# --- Tests window: run tests in watch mode ---
+# window:tests
+# pane:npm test -- --watch
+#
+# --- Database window: interactive DB shell with a monitoring pane ---
+# window:database
+# pane:psql -d myapp
+# vpane:watch -n5 'pg_isready && echo "DB OK"'
+
+# ── Layout Guide ─────────────────────────────────────────────────────
+# pane:  splits horizontally (left | right) — good for side-by-side views
+# vpane: splits vertically  (top / bottom)  — good for stacked output
+#
+# Example: three-pane layout (editor + server + tests)
+# window:workspace
+# pane:nvim .
+# vpane:npm run dev
+# vpane:npm test -- --watch
+
+# ── Remote Hosts ─────────────────────────────────────────────────────
+# Define remote hosts so you can use short aliases with --remote=devbox
+#
 # remote_host:user@devbox.example.com
 # remote_alias:devbox
 # remote_port:22
 # remote_attach:ssh
 
-# Example: Reusable remote project
+# ── Remote Projects ──────────────────────────────────────────────────
+# Define reusable remote project entries for quick access
+#
 # remote_project:atmux
 # remote_project_host:devbox
 # remote_project_dir:/home/user/projects/atmux
