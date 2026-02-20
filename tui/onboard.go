@@ -101,7 +101,7 @@ func (m onboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "space":
+		case " ", "space":
 			return m.handleSpace()
 
 		case "tab":
