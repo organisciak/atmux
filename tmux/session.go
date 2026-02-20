@@ -269,6 +269,20 @@ func ListSessionsRawWithExecutor(exec TmuxExecutor) ([]SessionLine, error) {
 	return sessions, nil
 }
 
+// AttachToSessionWithExecutor attaches or switches to the given tmux session
+// using the provided executor. For local sessions it behaves like AttachToSession;
+// for remote sessions it uses the executor's Interactive method.
+func AttachToSessionWithExecutor(name string, exec TmuxExecutor) error {
+	if name == "" {
+		return nil
+	}
+	if !exec.IsRemote() {
+		return AttachToSession(name)
+	}
+	// Remote: use Interactive to run "tmux attach-session -t name"
+	return exec.Interactive("attach-session", "-t", name)
+}
+
 // GetSessionPath returns the working directory of a tmux session.
 func GetSessionPath(name string) string {
 	cmd := exec.Command("tmux", "display-message", "-t", name, "-p", "#{session_path}")

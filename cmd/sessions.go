@@ -25,6 +25,7 @@ var (
 	sessionsNoPopup        bool
 	sessionsNonInteractive bool
 	sessionsNoBeads        bool
+	sessionsRemote         string
 )
 
 func init() {
@@ -34,6 +35,7 @@ func init() {
 	sessionsCmd.Flags().BoolVar(&sessionsNoPopup, "no-popup", false, "Disable popup mode (default: popup when inside tmux)")
 	sessionsCmd.Flags().BoolVarP(&sessionsNonInteractive, "non-interactive", "n", false, "Print sessions and exit (no TUI)")
 	sessionsCmd.Flags().BoolVar(&sessionsNoBeads, "no-beads", false, "Hide beads issue counts per session")
+	sessionsCmd.Flags().StringVarP(&sessionsRemote, "remote", "r", "", "Remote host(s) or aliases to include (comma-separated)")
 }
 
 func runSessions(cmd *cobra.Command, args []string) error {
@@ -41,17 +43,17 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		return attachToSession(args[0])
 	}
 
-	// Non-interactive mode: just print and exit
+	// Build executors (local + configured remotes + --remote flag)
+	executors, err := buildExecutors(sessionsRemote)
+	if err != nil {
+		return fmt.Errorf("failed to build executors: %w", err)
+	}
+	defer closeExecutors(executors)
+	registerCleanupSignals(executors)
+
+	// Non-interactive mode: print all sessions and exit
 	if sessionsNonInteractive {
-		lines, err := tmux.ListSessionsRaw()
-		if err != nil {
-			return err
-		}
-		out := cmd.OutOrStdout()
-		for _, line := range lines {
-			fmt.Fprintln(out, line.Line)
-		}
-		return nil
+		return runSessionsNonInteractive(cmd, executors)
 	}
 
 	// Force popup with -p, or default to popup when inside tmux (unless --no-popup)
@@ -62,6 +64,7 @@ func runSessions(cmd *cobra.Command, args []string) error {
 
 	result, err := tui.RunSessionsList(tui.SessionsOptions{
 		AltScreen: !sessionsInline,
+		Executors: executors,
 		ShowBeads: !sessionsNoBeads,
 	})
 	if err != nil {
@@ -77,11 +80,46 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		return runDirectAttach(session, result.WorkingDir)
 	}
 
-	// Attach to existing session
-	if sessionPath := tmux.GetSessionPath(result.SessionName); sessionPath != "" {
-		saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName)
+	// Attach to existing session via the appropriate executor
+	executor := result.Executor
+	if executor == nil {
+		executor = tmux.NewLocalExecutor()
 	}
-	return tmux.AttachToSession(result.SessionName)
+
+	if !executor.IsRemote() {
+		if sessionPath := tmux.GetSessionPath(result.SessionName); sessionPath != "" {
+			saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName)
+		}
+	}
+	return tmux.AttachToSessionWithExecutor(result.SessionName, executor)
+}
+
+// runSessionsNonInteractive prints sessions from all executors and exits.
+func runSessionsNonInteractive(cmd *cobra.Command, executors []tmux.TmuxExecutor) error {
+	out := cmd.OutOrStdout()
+	for _, exec := range executors {
+		lines, err := tmux.ListSessionsRawWithExecutor(exec)
+		if err != nil {
+			// Skip unreachable hosts with a warning
+			if exec.IsRemote() {
+				fmt.Fprintf(out, "# %s: unreachable\n", exec.HostLabel())
+				continue
+			}
+			return err
+		}
+		// Print host header when multiple executors are in play
+		if len(executors) > 1 {
+			label := "local"
+			if exec.IsRemote() {
+				label = exec.HostLabel()
+			}
+			fmt.Fprintf(out, "# %s\n", label)
+		}
+		for _, line := range lines {
+			fmt.Fprintln(out, line.Line)
+		}
+	}
+	return nil
 }
 
 func attachToSession(name string) error {
