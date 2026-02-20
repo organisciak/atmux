@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/porganisciak/agent-tmux/config"
@@ -56,6 +57,11 @@ type onboardModel struct {
 	completed    bool
 	keybindAdded bool
 	keybindError string
+
+	// Command editing in the review step
+	editingCommands bool              // true when in command edit mode
+	commandInputs   []textinput.Model // one text input per enabled agent
+	editCursor      int               // which command input is focused
 }
 
 func newOnboardModel() onboardModel {
@@ -81,6 +87,11 @@ func (m onboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// When editing commands, handle text input
+		if m.editingCommands {
+			return m.handleEditingKeys(msg)
+		}
+
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -131,7 +142,7 @@ func (m onboardModel) maxCursor() int {
 		}
 		return count // each enabled agent has a YOLO toggle + Continue
 	case 3: // Confirm
-		return 2 // Save & Continue, Save & Edit, Skip
+		return 3 // Edit Commands, Save & Continue, Save & Edit, Skip
 	case 4: // Keybind
 		return 1 // Yes and No buttons
 	default:
@@ -170,6 +181,15 @@ func (m onboardModel) handleEnter() (tea.Model, tea.Cmd) {
 
 	case 3: // Confirm
 		if m.cursor == 0 {
+			// Edit Commands - switch to inline editing mode
+			m.initCommandInputs()
+			m.editingCommands = true
+			m.editCursor = 0
+			if len(m.commandInputs) > 0 {
+				m.commandInputs[0].Focus()
+			}
+			return m, nil
+		} else if m.cursor == 1 {
 			// Save & Continue
 			if err := m.saveConfig(); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save config: %v\n", err)
@@ -178,7 +198,7 @@ func (m onboardModel) handleEnter() (tea.Model, tea.Cmd) {
 			m.step = 4
 			m.cursor = 0
 			return m, nil
-		} else if m.cursor == 1 {
+		} else if m.cursor == 2 {
 			// Save & Edit - save config then go back to agent selection
 			if err := m.saveConfig(); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save config: %v\n", err)
@@ -233,6 +253,86 @@ func (m onboardModel) handleTab() (tea.Model, tea.Cmd) {
 	if m.step < 3 {
 		m.step++
 		m.cursor = 0
+	}
+	return m, nil
+}
+
+// initCommandInputs creates text inputs pre-filled with the generated commands.
+func (m *onboardModel) initCommandInputs() {
+	agents := m.buildAgents()
+	m.commandInputs = make([]textinput.Model, len(agents))
+	for i, a := range agents {
+		ti := textinput.New()
+		ti.SetValue(a.Command)
+		ti.CharLimit = 256
+		ti.Width = 50
+		if i == 0 {
+			ti.Focus()
+		}
+		m.commandInputs[i] = ti
+	}
+}
+
+// applyCommandEdits writes the edited commands back to the agent choices.
+// It replaces the command and flags for each enabled agent with the edited text.
+func (m *onboardModel) applyCommandEdits() {
+	idx := 0
+	for i := range m.agents {
+		if !m.agents[i].enabled {
+			continue
+		}
+		if idx < len(m.commandInputs) {
+			edited := strings.TrimSpace(m.commandInputs[idx].Value())
+			if edited != "" {
+				// Store the full command, clear individual flags since user has full control
+				m.agents[i].command = edited
+				m.agents[i].yolo = false
+				m.agents[i].flags = ""
+			}
+			idx++
+		}
+	}
+}
+
+// handleEditingKeys handles keyboard input when editing commands in the review step.
+func (m onboardModel) handleEditingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		// Cancel editing, discard changes
+		m.editingCommands = false
+		m.commandInputs = nil
+		return m, nil
+	case "tab", "down":
+		// Move to next input
+		if len(m.commandInputs) > 0 {
+			m.commandInputs[m.editCursor].Blur()
+			m.editCursor = (m.editCursor + 1) % len(m.commandInputs)
+			m.commandInputs[m.editCursor].Focus()
+		}
+		return m, nil
+	case "shift+tab", "up":
+		// Move to previous input
+		if len(m.commandInputs) > 0 {
+			m.commandInputs[m.editCursor].Blur()
+			m.editCursor = (m.editCursor - 1 + len(m.commandInputs)) % len(m.commandInputs)
+			m.commandInputs[m.editCursor].Focus()
+		}
+		return m, nil
+	case "enter":
+		// Confirm edits
+		m.applyCommandEdits()
+		m.editingCommands = false
+		m.commandInputs = nil
+		return m, nil
+	}
+
+	// Pass key to the focused text input
+	if m.editCursor >= 0 && m.editCursor < len(m.commandInputs) {
+		var cmd tea.Cmd
+		m.commandInputs[m.editCursor], cmd = m.commandInputs[m.editCursor].Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -471,12 +571,34 @@ func (m onboardModel) viewConfirm() string {
 	lines = append(lines, titleStyle.Render("Review Configuration"))
 	lines = append(lines, "")
 
-	agents := m.buildAgents()
-	lines = append(lines, "Your agents window will contain:")
-	lines = append(lines, "")
-	for _, a := range agents {
-		lines = append(lines, "  "+codeStyle.Render(a.Command))
+	if m.editingCommands {
+		// Edit mode: show text inputs for each command
+		lines = append(lines, "Edit your agent commands:")
+		lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("Tab/↑↓ to switch, Enter to confirm, Esc to cancel"))
+		lines = append(lines, "")
+
+		idx := 0
+		for _, a := range m.agents {
+			if !a.enabled {
+				continue
+			}
+			if idx < len(m.commandInputs) {
+				label := lipgloss.NewStyle().Bold(true).Render(a.name + ": ")
+				input := m.commandInputs[idx].View()
+				lines = append(lines, "  "+label+input)
+			}
+			idx++
+		}
+	} else {
+		// Normal mode: show generated commands read-only
+		agents := m.buildAgents()
+		lines = append(lines, "Your agents window will contain:")
+		lines = append(lines, "")
+		for _, a := range agents {
+			lines = append(lines, "  "+codeStyle.Render(a.Command))
+		}
 	}
+
 	lines = append(lines, "")
 
 	path, _ := config.GlobalConfigPath()
@@ -484,19 +606,25 @@ func (m onboardModel) viewConfirm() string {
 	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("  "+path))
 	lines = append(lines, "")
 
-	saveBtn := "  Save & Continue"
-	editBtn := "  Save & Edit"
-	skipBtn := "  Skip (don't save)"
-	if m.cursor == 0 {
-		saveBtn = selectedStyle.Render("> Save & Continue")
-	} else if m.cursor == 1 {
-		editBtn = selectedStyle.Render("> Save & Edit")
-	} else {
-		skipBtn = selectedStyle.Render("> Skip (don't save)")
+	if !m.editingCommands {
+		editCmdBtn := "  Edit Commands"
+		saveBtn := "  Save & Continue"
+		editBtn := "  Save & Edit"
+		skipBtn := "  Skip (don't save)"
+		if m.cursor == 0 {
+			editCmdBtn = selectedStyle.Render("> Edit Commands")
+		} else if m.cursor == 1 {
+			saveBtn = selectedStyle.Render("> Save & Continue")
+		} else if m.cursor == 2 {
+			editBtn = selectedStyle.Render("> Save & Edit")
+		} else {
+			skipBtn = selectedStyle.Render("> Skip (don't save)")
+		}
+		lines = append(lines, editCmdBtn)
+		lines = append(lines, saveBtn)
+		lines = append(lines, editBtn)
+		lines = append(lines, skipBtn)
 	}
-	lines = append(lines, saveBtn)
-	lines = append(lines, editBtn)
-	lines = append(lines, skipBtn)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
 	return lipgloss.Place(m.width, m.height,
