@@ -331,6 +331,7 @@ func (m Model) handleTreeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if node := m.selectedNode(); node != nil {
 			if session := sessionFromNode(node); session != "" {
 				m.attachSession = session
+				m.reviveDir = ""
 				return m, tea.Quit
 			}
 		}
@@ -377,6 +378,7 @@ func (m Model) handleRecentKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Revive selected recent session (quit with working dir set)
 		if entry := m.selectedRecentEntry(); entry != nil {
 			m.attachSession = entry.SessionName
+			m.reviveDir = entry.WorkingDirectory
 			return m, tea.Quit
 		}
 		return m, nil
@@ -390,6 +392,7 @@ func (m Model) handleRecentKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Revive (same as enter for recent entries)
 		if entry := m.selectedRecentEntry(); entry != nil {
 			m.attachSession = entry.SessionName
+			m.reviveDir = entry.WorkingDirectory
 			return m, tea.Quit
 		}
 		return m, nil
@@ -567,6 +570,7 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 			session := sessionFromTarget(zone.target)
 			if session != "" {
 				m.attachSession = session
+				m.reviveDir = ""
 				return m, tea.Quit
 			}
 			return m, nil
@@ -627,6 +631,7 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 				time.Since(m.lastClickAt) <= doubleClickThreshold {
 				if session := sessionFromNode(node); session != "" {
 					m.attachSession = session
+					m.reviveDir = ""
 					return m, tea.Quit
 				}
 			}
@@ -649,6 +654,7 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 					time.Since(m.lastClickAt) <= doubleClickThreshold {
 					entry := m.recentSessions[recentIdx]
 					m.attachSession = entry.SessionName
+					m.reviveDir = entry.WorkingDirectory
 					return m, tea.Quit
 				}
 				m.lastClickIdx = recentIdx + 10000 // Offset to distinguish
@@ -876,6 +882,7 @@ func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
 		session := sessionFromTarget(target)
 		if session != "" {
 			m.attachSession = session
+			m.reviveDir = ""
 			return m, tea.Quit
 		}
 
@@ -884,6 +891,7 @@ func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
 		session := sessionFromTarget(target)
 		if session != "" {
 			m.attachSession = session
+			m.reviveDir = ""
 			return m, tea.Quit
 		}
 

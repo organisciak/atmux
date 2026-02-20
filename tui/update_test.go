@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/porganisciak/agent-tmux/history"
 	"github.com/porganisciak/agent-tmux/tmux"
 )
 
@@ -89,6 +90,70 @@ func TestMouseResizeUpdatesTreeWidth(t *testing.T) {
 	releasedModel := updated.(Model)
 	if releasedModel.resizing {
 		t.Fatalf("expected resizing to stop on release")
+	}
+}
+
+func TestRecentEnterSetsAttachSessionAndReviveDir(t *testing.T) {
+	m := NewModel(Options{})
+	m.focusRecent = true
+	m.recentSelectedIndex = 0
+	m.recentSessions = []history.Entry{
+		{SessionName: "agent-proj", WorkingDirectory: "/tmp/proj"},
+	}
+
+	updated, _ := m.handleRecentKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	updatedModel := updated.(Model)
+
+	if updatedModel.attachSession != "agent-proj" {
+		t.Fatalf("expected attach session agent-proj, got %q", updatedModel.attachSession)
+	}
+	if updatedModel.reviveDir != "/tmp/proj" {
+		t.Fatalf("expected revive dir /tmp/proj, got %q", updatedModel.reviveDir)
+	}
+}
+
+func TestRecentAttachKeySetsAttachSessionAndReviveDir(t *testing.T) {
+	m := NewModel(Options{})
+	m.focusRecent = true
+	m.recentSelectedIndex = 0
+	m.recentSessions = []history.Entry{
+		{SessionName: "agent-proj", WorkingDirectory: "/tmp/proj"},
+	}
+
+	key := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}}
+	updated, _ := m.handleRecentKeys(key)
+	updatedModel := updated.(Model)
+
+	if updatedModel.attachSession != "agent-proj" {
+		t.Fatalf("expected attach session agent-proj, got %q", updatedModel.attachSession)
+	}
+	if updatedModel.reviveDir != "/tmp/proj" {
+		t.Fatalf("expected revive dir /tmp/proj, got %q", updatedModel.reviveDir)
+	}
+}
+
+func TestRecentDoubleClickSetsAttachSessionAndReviveDir(t *testing.T) {
+	m := NewModel(Options{})
+	m.width = 120
+	m.height = 40
+	m.calculateLayout()
+	m.recentSessions = []history.Entry{
+		{SessionName: "agent-proj", WorkingDirectory: "/tmp/proj"},
+	}
+
+	clickX := 1
+	clickY := inputHeight + 4 // first visible recent line when tree has no nodes
+
+	updated, _ := m.handleLeftClick(clickX, clickY)
+	m = updated.(Model)
+	updated, _ = m.handleLeftClick(clickX, clickY)
+	updatedModel := updated.(Model)
+
+	if updatedModel.attachSession != "agent-proj" {
+		t.Fatalf("expected attach session agent-proj, got %q", updatedModel.attachSession)
+	}
+	if updatedModel.reviveDir != "/tmp/proj" {
+		t.Fatalf("expected revive dir /tmp/proj, got %q", updatedModel.reviveDir)
 	}
 }
 

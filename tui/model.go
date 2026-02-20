@@ -75,6 +75,7 @@ type Model struct {
 	lastSent      string // Last command sent (for status display)
 	ctrlCPrimed   bool   // Tracks double Ctrl-C to exit
 	attachSession string
+	reviveDir     string // Working directory for reviving a recent session
 
 	// Debug mode
 	sendMethod tmux.SendMethod
@@ -597,8 +598,21 @@ func Run(opts Options) error {
 	if err != nil {
 		return err
 	}
-	if model, ok := finalModel.(Model); ok && model.attachSession != "" {
-		return tmux.AttachToSession(model.attachSession)
+	model, ok := finalModel.(Model)
+	if !ok || model.attachSession == "" {
+		return nil
 	}
-	return nil
+
+	if model.reviveDir != "" {
+		session := tmux.NewSession(model.reviveDir)
+		if !session.Exists() {
+			if err := session.Create(nil); err != nil {
+				return err
+			}
+			session.SelectDefault()
+		}
+		return tmux.AttachToSession(session.Name)
+	}
+
+	return tmux.AttachToSession(model.attachSession)
 }
