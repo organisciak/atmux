@@ -74,7 +74,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 			return runDirectAttach(histSession, result.WorkingDir)
 		}
 		if sessionPath := tmux.GetSessionPath(result.SessionName); sessionPath != "" {
-			saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName)
+			saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName, "", "")
 		}
 		return tmux.AttachToSession(result.SessionName)
 	default: // "landing" or empty
@@ -87,7 +87,7 @@ func runDirectAttach(session *tmux.Session, workingDir string) error {
 	// Check if session already exists
 	if session.Exists() {
 		fmt.Printf("Attaching to existing session: %s\n", session.Name)
-		saveHistory(filepath.Base(workingDir), workingDir, session.Name)
+		saveHistory(filepath.Base(workingDir), workingDir, session.Name, "", "")
 		return session.Attach()
 	}
 
@@ -113,13 +113,14 @@ func runDirectAttach(session *tmux.Session, workingDir string) error {
 	}
 
 	// Save to history and attach
-	saveHistory(filepath.Base(workingDir), workingDir, session.Name)
+	saveHistory(filepath.Base(workingDir), workingDir, session.Name, "", "")
 	session.SelectDefault()
 	return session.Attach()
 }
 
 // saveHistory saves a session to history, logging any errors.
-func saveHistory(name, workingDir, sessionName string) {
+// host and attachMethod should be empty for local sessions.
+func saveHistory(name, workingDir, sessionName, host, attachMethod string) {
 	store, err := history.Open()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to open history: %v\n", err)
@@ -127,7 +128,7 @@ func saveHistory(name, workingDir, sessionName string) {
 	}
 	defer store.Close()
 
-	if err := store.SaveEntry(name, workingDir, sessionName); err != nil {
+	if err := store.SaveEntry(name, workingDir, sessionName, host, attachMethod); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save history: %v\n", err)
 	}
 }
@@ -148,7 +149,7 @@ func runLandingPage(session *tmux.Session, workingDir string) error {
 	case "attach":
 		// Save to history before attaching to another session
 		if sessionPath := tmux.GetSessionPath(result.Target); sessionPath != "" {
-			saveHistory(filepath.Base(sessionPath), sessionPath, result.Target)
+			saveHistory(filepath.Base(sessionPath), sessionPath, result.Target, "", "")
 		}
 		return tmux.AttachToSession(result.Target)
 	case "revive":

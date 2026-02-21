@@ -69,7 +69,14 @@ func runRecents(cmd *cobra.Command, args []string) error {
 		return nil // User quit without selection
 	}
 
-	// Revive session in the selected working directory
+	// Remote session revival - reattach via the appropriate executor
+	if result.Host != "" {
+		executor := tmux.NewRemoteExecutor(result.Host, 0, result.AttachMethod, result.Host)
+		defer executor.Close()
+		return tmux.AttachToSessionWithExecutor(result.SessionName, executor)
+	}
+
+	// Local session revival - create new session in that directory
 	session := tmux.NewSession(result.WorkingDir)
 	return runDirectAttach(session, result.WorkingDir)
 }
@@ -100,12 +107,18 @@ func runRecentsList(cmd *cobra.Command) error {
 	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
+	hostStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	out := cmd.OutOrStdout()
 	for _, e := range entries {
 		ago := timeAgo(e.LastUsedAt)
 		displayPath := displayPathForList(e.WorkingDirectory, recentsHidePaths, true)
-		fmt.Fprintf(out, "%s  %s  %s\n",
+		hostLabel := ""
+		if e.Host != "" {
+			hostLabel = hostStyle.Render("@"+e.Host) + "  "
+		}
+		fmt.Fprintf(out, "%s  %s%s  %s\n",
 			nameStyle.Render(e.Name),
+			hostLabel,
 			dimStyle.Render(displayPath),
 			dimStyle.Render("("+ago+")"))
 	}
