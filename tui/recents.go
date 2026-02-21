@@ -19,8 +19,10 @@ type RecentsOptions struct {
 
 // RecentsResult contains the outcome of the recents interaction.
 type RecentsResult struct {
-	SessionName string // Selected session name (empty if quit)
-	WorkingDir  string // Working directory to revive in
+	SessionName  string // Selected session name (empty if quit)
+	WorkingDir   string // Working directory to revive in
+	Host         string // Remote host label ("" = local)
+	AttachMethod string // "ssh" or "mosh" ("" = local)
 }
 
 // RunRecents runs the recents TUI and returns the selected session.
@@ -39,8 +41,10 @@ func RunRecents(opts RecentsOptions) (*RecentsResult, error) {
 	}
 	if model, ok := finalModel.(recentsModel); ok {
 		return &RecentsResult{
-			SessionName: model.selectedSession,
-			WorkingDir:  model.selectedDir,
+			SessionName:  model.selectedSession,
+			WorkingDir:   model.selectedDir,
+			Host:         model.selectedHost,
+			AttachMethod: model.selectedAttachMethod,
 		}, nil
 	}
 	return &RecentsResult{}, nil
@@ -48,17 +52,19 @@ func RunRecents(opts RecentsOptions) (*RecentsResult, error) {
 
 // recentsModel is the Bubble Tea model for the recents view.
 type recentsModel struct {
-	entries         []history.Entry
-	filteredEntries []history.Entry
-	width           int
-	height          int
-	selectedIndex   int
-	selectedSession string
-	selectedDir     string
-	filterText      string
-	filterMode      bool
-	lastError       error
-	limit           int
+	entries              []history.Entry
+	filteredEntries      []history.Entry
+	width                int
+	height               int
+	selectedIndex        int
+	selectedSession      string
+	selectedDir          string
+	selectedHost         string
+	selectedAttachMethod string
+	filterText           string
+	filterMode           bool
+	lastError            error
+	limit                int
 }
 
 func newRecentsModel(opts RecentsOptions) recentsModel {
@@ -207,6 +213,8 @@ func (m recentsModel) selectCurrent() (tea.Model, tea.Cmd) {
 		entry := m.filteredEntries[m.selectedIndex]
 		m.selectedSession = entry.SessionName
 		m.selectedDir = entry.WorkingDirectory
+		m.selectedHost = entry.Host
+		m.selectedAttachMethod = entry.AttachMethod
 	}
 	return m, tea.Quit
 }
@@ -225,9 +233,10 @@ func (m *recentsModel) applyFilter() {
 	filter := strings.ToLower(m.filterText)
 	var filtered []history.Entry
 	for _, e := range m.entries {
-		// Search in name and working directory
+		// Search in name, working directory, and host
 		if strings.Contains(strings.ToLower(e.Name), filter) ||
-			strings.Contains(strings.ToLower(e.WorkingDirectory), filter) {
+			strings.Contains(strings.ToLower(e.WorkingDirectory), filter) ||
+			strings.Contains(strings.ToLower(e.Host), filter) {
 			filtered = append(filtered, e)
 		}
 	}
@@ -347,11 +356,18 @@ func (m recentsModel) renderEntry(entry history.Entry, selected bool) string {
 		prefix = "  "
 	}
 
-	// Layout: prefix + name + padding + path + time
-	// For now, simple layout
-	return fmt.Sprintf("%s%-20s  %s  %s",
+	// Show host label for remote entries
+	hostLabel := ""
+	if entry.Host != "" {
+		hostStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+		hostLabel = hostStyle.Render("@"+entry.Host) + "  "
+	}
+
+	// Layout: prefix + name + host + path + time
+	return fmt.Sprintf("%s%-20s  %s%s  %s",
 		prefix,
 		nameStr,
+		hostLabel,
 		pathStyle.Render(displayPath),
 		agoStyle.Render("("+ago+")"))
 }

@@ -86,9 +86,17 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		executor = tmux.NewLocalExecutor()
 	}
 
-	if !executor.IsRemote() {
+	if executor.IsRemote() {
+		// Save remote session to history with host identity
+		host := executor.HostLabel()
+		attachMethod := ""
+		if re, ok := executor.(*tmux.RemoteExecutor); ok {
+			attachMethod = re.AttachMethod
+		}
+		saveHistory(result.SessionName, "", result.SessionName, host, attachMethod)
+	} else {
 		if sessionPath := tmux.GetSessionPath(result.SessionName); sessionPath != "" {
-			saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName)
+			saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName, "", "")
 		}
 	}
 	return tmux.AttachToSessionWithExecutor(result.SessionName, executor)

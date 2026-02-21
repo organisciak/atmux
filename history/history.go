@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	schemaVersion = 1
+	schemaVersion = 2
 	maxHistory    = 100 // Maximum entries before LRU eviction
 )
 
@@ -22,6 +22,8 @@ type Entry struct {
 	Name             string
 	WorkingDirectory string
 	SessionName      string
+	Host             string // Remote host label ("" = local)
+	AttachMethod     string // "ssh" or "mosh" ("" = local/ssh default)
 	CreatedAt        time.Time
 	LastUsedAt       time.Time
 }
@@ -120,12 +122,14 @@ func (s *Store) migrate() error {
 				name TEXT NOT NULL,
 				working_directory TEXT NOT NULL,
 				session_name TEXT NOT NULL,
+				host TEXT NOT NULL DEFAULT '',
+				attach_method TEXT NOT NULL DEFAULT 'ssh',
 				created_at INTEGER NOT NULL,
 				last_used_at INTEGER NOT NULL
 			);
 
 			CREATE UNIQUE INDEX IF NOT EXISTS agent_history_unique
-				ON agent_history (session_name, working_directory);
+				ON agent_history (session_name, working_directory, host);
 
 			CREATE INDEX IF NOT EXISTS agent_history_last_used
 				ON agent_history (last_used_at DESC);
@@ -133,7 +137,25 @@ func (s *Store) migrate() error {
 			CREATE INDEX IF NOT EXISTS agent_history_name
 				ON agent_history (name);
 
-			PRAGMA user_version = 1;
+			PRAGMA user_version = 2;
+		`)
+		if err != nil {
+			return err
+		}
+	}
+
+	if version == 1 {
+		// Migration from v1 to v2: add host and attach_method columns,
+		// update unique index to include host.
+		_, err := s.db.Exec(`
+			ALTER TABLE agent_history ADD COLUMN host TEXT NOT NULL DEFAULT '';
+			ALTER TABLE agent_history ADD COLUMN attach_method TEXT NOT NULL DEFAULT 'ssh';
+
+			DROP INDEX IF EXISTS agent_history_unique;
+			CREATE UNIQUE INDEX agent_history_unique
+				ON agent_history (session_name, working_directory, host);
+
+			PRAGMA user_version = 2;
 		`)
 		if err != nil {
 			return err
@@ -144,17 +166,21 @@ func (s *Store) migrate() error {
 }
 
 // SaveEntry inserts or updates an agent history entry.
-// If an entry with the same session_name and working_directory exists,
+// If an entry with the same session_name, working_directory, and host exists,
 // it updates last_used_at. Otherwise, it inserts a new entry.
-func (s *Store) SaveEntry(name, workingDir, sessionName string) error {
+// An empty host means a local session.
+func (s *Store) SaveEntry(name, workingDir, sessionName, host, attachMethod string) error {
 	now := time.Now().Unix()
+	if attachMethod == "" {
+		attachMethod = "ssh"
+	}
 
 	// Try to update existing entry first
 	result, err := s.db.Exec(`
 		UPDATE agent_history
-		SET name = ?, last_used_at = ?
-		WHERE session_name = ? AND working_directory = ?
-	`, name, now, sessionName, workingDir)
+		SET name = ?, last_used_at = ?, attach_method = ?
+		WHERE session_name = ? AND working_directory = ? AND host = ?
+	`, name, now, attachMethod, sessionName, workingDir, host)
 	if err != nil {
 		return err
 	}
@@ -167,9 +193,9 @@ func (s *Store) SaveEntry(name, workingDir, sessionName string) error {
 	if affected == 0 {
 		// Insert new entry
 		_, err = s.db.Exec(`
-			INSERT INTO agent_history (name, working_directory, session_name, created_at, last_used_at)
-			VALUES (?, ?, ?, ?, ?)
-		`, name, workingDir, sessionName, now, now)
+			INSERT INTO agent_history (name, working_directory, session_name, host, attach_method, created_at, last_used_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, name, workingDir, sessionName, host, attachMethod, now, now)
 		if err != nil {
 			return err
 		}
@@ -195,7 +221,7 @@ func (s *Store) enforceLimitLRU() error {
 // LoadHistory returns all entries, most recently used first.
 func (s *Store) LoadHistory() ([]Entry, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, working_directory, session_name, created_at, last_used_at
+		SELECT id, name, working_directory, session_name, host, attach_method, created_at, last_used_at
 		FROM agent_history
 		ORDER BY last_used_at DESC
 	`)
@@ -208,7 +234,7 @@ func (s *Store) LoadHistory() ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var createdAt, lastUsedAt int64
-		if err := rows.Scan(&e.ID, &e.Name, &e.WorkingDirectory, &e.SessionName, &createdAt, &lastUsedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Name, &e.WorkingDirectory, &e.SessionName, &e.Host, &e.AttachMethod, &createdAt, &lastUsedAt); err != nil {
 			return nil, err
 		}
 		e.CreatedAt = time.Unix(createdAt, 0)
@@ -239,14 +265,14 @@ func (s *Store) ClearHistory() error {
 // GetBySessionName finds an entry by session name.
 func (s *Store) GetBySessionName(sessionName string) (*Entry, error) {
 	row := s.db.QueryRow(`
-		SELECT id, name, working_directory, session_name, created_at, last_used_at
+		SELECT id, name, working_directory, session_name, host, attach_method, created_at, last_used_at
 		FROM agent_history
 		WHERE session_name = ?
 	`, sessionName)
 
 	var e Entry
 	var createdAt, lastUsedAt int64
-	err := row.Scan(&e.ID, &e.Name, &e.WorkingDirectory, &e.SessionName, &createdAt, &lastUsedAt)
+	err := row.Scan(&e.ID, &e.Name, &e.WorkingDirectory, &e.SessionName, &e.Host, &e.AttachMethod, &createdAt, &lastUsedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
