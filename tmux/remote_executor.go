@@ -19,10 +19,11 @@ const (
 // RemoteExecutor runs tmux commands on a remote host via SSH.
 // It uses SSH ControlMaster for connection pooling.
 type RemoteExecutor struct {
-	Host         string // user@host or SSH config alias
-	Port         int    // SSH port (default 22)
-	AttachMethod string // "ssh" or "mosh"
-	Alias        string // Display alias (e.g., "devbox")
+	Host           string // user@host or SSH config alias
+	Port           int    // SSH port (default 22)
+	AttachMethod   string // "ssh" or "mosh"
+	Alias          string // Display alias (e.g., "devbox")
+	AttachStrategy string // Per-host override: "auto", "replace", or "new-window" (empty = use global)
 
 	controlPath string    // ControlMaster socket path
 	controlOnce sync.Once // Ensures ControlMaster is started at most once

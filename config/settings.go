@@ -6,6 +6,27 @@ import (
 	"path/filepath"
 )
 
+// AttachStrategy controls how remote sessions are attached when inside tmux.
+type AttachStrategy string
+
+const (
+	// AttachStrategyAuto opens a new tmux window when inside tmux, otherwise attaches directly.
+	AttachStrategyAuto AttachStrategy = "auto"
+	// AttachStrategyReplace attaches directly in the current terminal (replaces the TUI).
+	AttachStrategyReplace AttachStrategy = "replace"
+	// AttachStrategyNewWindow always opens a new tmux window for the remote session.
+	AttachStrategyNewWindow AttachStrategy = "new-window"
+)
+
+// ValidAttachStrategy reports whether s is a recognized attach strategy.
+func ValidAttachStrategy(s AttachStrategy) bool {
+	switch s {
+	case AttachStrategyAuto, AttachStrategyReplace, AttachStrategyNewWindow:
+		return true
+	}
+	return false
+}
+
 const (
 	settingsDirName       = "atmux"
 	legacySettingsDirName = "agent-tmux"
@@ -16,6 +37,10 @@ type Settings struct {
 	// DefaultAction controls what happens when running `atmux` with no subcommand
 	// Values: "landing" (show landing page), "resume" (start/attach directly), "sessions" (show sessions list)
 	DefaultAction string `json:"default_action"`
+
+	// RemoteAttachStrategy controls how remote sessions are attached when inside tmux.
+	// Values: "auto" (default), "replace", "new-window"
+	RemoteAttachStrategy AttachStrategy `json:"remote_attach_strategy,omitempty"`
 }
 
 // DefaultSettings returns settings with default values

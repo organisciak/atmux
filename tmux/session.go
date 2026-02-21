@@ -273,14 +273,80 @@ func ListSessionsRawWithExecutor(exec TmuxExecutor) ([]SessionLine, error) {
 // using the provided executor. For local sessions it behaves like AttachToSession;
 // for remote sessions it uses the executor's Interactive method.
 func AttachToSessionWithExecutor(name string, exec TmuxExecutor) error {
+	return AttachToSessionWithStrategy(name, exec, config.AttachStrategyAuto)
+}
+
+// AttachToSessionWithStrategy attaches to a session using the given strategy.
+// For local sessions the strategy is ignored (standard switch-client / attach behavior).
+// For remote sessions:
+//   - auto: new tmux window when inside tmux, direct attach otherwise
+//   - replace: always attach directly (replaces current terminal)
+//   - new-window: always open a new tmux window for the remote session
+func AttachToSessionWithStrategy(name string, executor TmuxExecutor, strategy config.AttachStrategy) error {
 	if name == "" {
 		return nil
 	}
-	if !exec.IsRemote() {
+	if !executor.IsRemote() {
 		return AttachToSession(name)
 	}
-	// Remote: use Interactive to run "tmux attach-session -t name"
-	return exec.Interactive("attach-session", "-t", name)
+
+	insideTmux := os.Getenv("TMUX") != ""
+
+	switch strategy {
+	case config.AttachStrategyReplace:
+		return executor.Interactive("attach-session", "-t", name)
+	case config.AttachStrategyNewWindow:
+		if !insideTmux {
+			// Can't create a tmux window if we're not inside tmux
+			return executor.Interactive("attach-session", "-t", name)
+		}
+		return attachRemoteInNewWindow(name, executor)
+	default: // auto
+		if insideTmux {
+			return attachRemoteInNewWindow(name, executor)
+		}
+		return executor.Interactive("attach-session", "-t", name)
+	}
+}
+
+// attachRemoteInNewWindow opens a new local tmux window that runs the remote
+// attach command (SSH or mosh) for the given session.
+func attachRemoteInNewWindow(name string, executor TmuxExecutor) error {
+	re, ok := executor.(*RemoteExecutor)
+	if !ok {
+		// Fallback: not a RemoteExecutor, attach directly
+		return executor.Interactive("attach-session", "-t", name)
+	}
+
+	windowName := "remote:" + name
+	var shellCmd []string
+
+	if re.AttachMethod == "mosh" && moshAvailable() {
+		shellCmd = re.buildMoshArgs("attach-session", "-t", name)
+		shellCmd = append([]string{"mosh"}, shellCmd...)
+	} else {
+		shellCmd = re.buildSSHInteractiveArgs("attach-session", "-t", name)
+		shellCmd = append([]string{"ssh"}, shellCmd...)
+	}
+
+	// Join into a single shell string for tmux new-window
+	cmdStr := shellQuoteJoin(shellCmd)
+	tmuxCmd := exec.Command("tmux", "new-window", "-n", windowName, cmdStr)
+	return tmuxCmd.Run()
+}
+
+// shellQuoteJoin joins args into a shell command string, quoting args that
+// contain spaces.
+func shellQuoteJoin(args []string) string {
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		if strings.ContainsAny(a, " \t'\"\\") {
+			quoted[i] = "'" + strings.ReplaceAll(a, "'", "'\\''") + "'"
+		} else {
+			quoted[i] = a
+		}
+	}
+	return strings.Join(quoted, " ")
 }
 
 // GetSessionPath returns the working directory of a tmux session.
