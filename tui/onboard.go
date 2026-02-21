@@ -15,10 +15,12 @@ import (
 
 // OnboardResult contains the outcome of the onboard interaction.
 type OnboardResult struct {
-	Completed     bool
-	Agents        []config.AgentConfig
-	KeybindAdded  bool
-	KeybindError  string
+	Completed          bool
+	Agents             []config.AgentConfig
+	KeybindAdded       bool
+	KeybindError       string
+	BrowseBindAdded    bool   // prefix+S → atmux browse --popup
+	SessionsBindAdded  bool   // prefix+s → atmux sessions -p
 }
 
 // RunOnboard runs the interactive onboard TUI.
@@ -31,10 +33,12 @@ func RunOnboard() (*OnboardResult, error) {
 	}
 	if model, ok := finalModel.(onboardModel); ok {
 		return &OnboardResult{
-			Completed:    model.completed,
-			Agents:       model.buildAgents(),
-			KeybindAdded: model.keybindAdded,
-			KeybindError: model.keybindError,
+			Completed:         model.completed,
+			Agents:            model.buildAgents(),
+			KeybindAdded:      model.browseBindEnabled || model.sessionsBindEnabled,
+			KeybindError:      model.keybindError,
+			BrowseBindAdded:   model.browseBindAdded,
+			SessionsBindAdded: model.sessionsBindAdded,
 		}, nil
 	}
 	return &OnboardResult{}, nil
@@ -48,6 +52,18 @@ type agentChoice struct {
 	flags    string
 }
 
+// keybindOption represents a single keybinding the user can toggle on/off.
+type keybindOption struct {
+	key         string // e.g. "S" or "s"
+	command     string // full tmux run-shell command argument
+	label       string // short label for the binding
+	description string // what this binding does
+	enabled     bool   // user toggle
+	conflict    string // existing binding for this key (empty if none)
+	isDefault   bool   // true if this conflicts with a tmux default binding
+	defaultDesc string // description of the default tmux binding
+}
+
 type onboardModel struct {
 	width        int
 	height       int
@@ -55,8 +71,14 @@ type onboardModel struct {
 	cursor       int
 	agents       []agentChoice
 	completed    bool
-	keybindAdded bool
 	keybindError string
+
+	// Keybinding step (step 4)
+	keybindOptions      []keybindOption // available bindings to offer
+	browseBindEnabled   bool
+	sessionsBindEnabled bool
+	browseBindAdded     bool
+	sessionsBindAdded   bool
 
 	// Command editing in the review step
 	editingCommands bool              // true when in command edit mode
@@ -65,6 +87,33 @@ type onboardModel struct {
 }
 
 func newOnboardModel() onboardModel {
+	// Parse existing tmux.conf to detect key conflicts
+	existingBindings := parseTmuxConfBindings()
+
+	browseOpt := keybindOption{
+		key:         "S",
+		command:     "atmux browse --popup",
+		label:       "prefix + S",
+		description: "Opens the tree-style session browser as a tmux popup",
+		enabled:     true,
+	}
+	if cmd, ok := existingBindings["S"]; ok {
+		browseOpt.conflict = cmd
+	}
+
+	sessionsOpt := keybindOption{
+		key:         "s",
+		command:     "atmux sessions -p",
+		label:       "prefix + s",
+		description: "Opens the quick session list as a tmux popup",
+		enabled:     true,
+		isDefault:   true,
+		defaultDesc: "tmux choose-tree (built-in session picker)",
+	}
+	if cmd, ok := existingBindings["s"]; ok {
+		sessionsOpt.conflict = cmd
+	}
+
 	return onboardModel{
 		step: 0,
 		agents: []agentChoice{
@@ -72,7 +121,31 @@ func newOnboardModel() onboardModel {
 			{name: "Codex", command: "codex", enabled: true, yolo: true},
 			{name: "Gemini CLI", command: "gemini", enabled: false, yolo: false},
 		},
+		keybindOptions: []keybindOption{browseOpt, sessionsOpt},
 	}
+}
+
+// parseTmuxConfBindings reads ~/.tmux.conf and returns a map of key -> existing command.
+func parseTmuxConfBindings() map[string]string {
+	bindings := make(map[string]string)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return bindings
+	}
+	tmuxConfPath := filepath.Join(home, ".tmux.conf")
+	content, err := os.ReadFile(tmuxConfPath)
+	if err != nil {
+		return bindings
+	}
+	// Match: bind-key <key> <command...> or bind <key> <command...>
+	// Skip comment lines and lines with -n (root table), -r (repeat) flags before the key
+	pattern := regexp.MustCompile(`(?m)^\s*bind(?:-key)?\s+(?:-[rn]\s+)?(\S+)\s+(.+)$`)
+	for _, match := range pattern.FindAllStringSubmatch(string(content), -1) {
+		key := match[1]
+		cmd := strings.TrimSpace(match[2])
+		bindings[key] = cmd
+	}
+	return bindings
 }
 
 func (m onboardModel) Init() tea.Cmd {
@@ -144,7 +217,8 @@ func (m onboardModel) maxCursor() int {
 	case 3: // Confirm
 		return 3 // Edit Commands, Save & Continue, Save & Edit, Skip
 	case 4: // Keybind
-		return 1 // Yes and No buttons
+		// Each keybind option + Add selected + Skip
+		return len(m.keybindOptions) + 1
 	default:
 		return 0
 	}
@@ -214,14 +288,18 @@ func (m onboardModel) handleEnter() (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case 4: // Keybind
-		if m.cursor == 0 {
-			// Yes - add keybinding
-			if err := m.addKeybinding(); err != nil {
+		if m.cursor < len(m.keybindOptions) {
+			// Toggle the keybind option on/off
+			m.keybindOptions[m.cursor].enabled = !m.keybindOptions[m.cursor].enabled
+			return m, nil
+		}
+		if m.cursor == len(m.keybindOptions) {
+			// "Add selected" button — apply enabled bindings
+			if err := m.addKeybindings(); err != nil {
 				m.keybindError = err.Error()
-			} else {
-				m.keybindAdded = true
 			}
 		}
+		// cursor == len+1 is "Skip" — just quit
 		return m, tea.Quit
 	}
 	return m, nil
@@ -243,6 +321,10 @@ func (m onboardModel) handleSpace() (tea.Model, tea.Cmd) {
 				}
 				idx++
 			}
+		}
+	case 4: // Toggle keybinding option
+		if m.cursor < len(m.keybindOptions) {
+			m.keybindOptions[m.cursor].enabled = !m.keybindOptions[m.cursor].enabled
 		}
 	}
 	return m, nil
@@ -635,31 +717,74 @@ func (m onboardModel) viewConfirm() string {
 func (m onboardModel) viewKeybind() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
 	codeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
+	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	descStyle := lipgloss.NewStyle().Foreground(dimColor)
+	checkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
+	uncheckStyle := lipgloss.NewStyle().Foreground(dimColor)
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(primaryColor).
 		Padding(1, 2)
 
 	var lines []string
-	lines = append(lines, titleStyle.Render("Add tmux Keybinding?"))
+	lines = append(lines, titleStyle.Render("Add tmux Keybindings?"))
 	lines = append(lines, "")
-	lines = append(lines, "Would you like to add a tmux keybinding for quick access?")
-	lines = append(lines, "")
-	lines = append(lines, "This will add to ~/.tmux.conf:")
-	lines = append(lines, "  "+codeStyle.Render("bind-key S run-shell \"atmux browse\""))
-	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("Press prefix + S to open the session browser."))
+	lines = append(lines, "Select keybindings to add to ~/.tmux.conf:")
+	lines = append(lines, descStyle.Render("Space to toggle, Enter on a binding to toggle, Enter on a button to confirm"))
 	lines = append(lines, "")
 
-	yesBtn := "  Yes, add keybinding"
-	noBtn := "  No, skip"
-	if m.cursor == 0 {
-		yesBtn = selectedStyle.Render("> Yes, add keybinding")
-	} else {
-		noBtn = selectedStyle.Render("> No, skip")
+	for i, opt := range m.keybindOptions {
+		checkbox := "[ ]"
+		style := uncheckStyle
+		if opt.enabled {
+			checkbox = "[✓]"
+			style = checkStyle
+		}
+
+		line := fmt.Sprintf("%s %s → %s", checkbox, opt.label, opt.command)
+		if i == m.cursor {
+			line = selectedStyle.Render("> " + line)
+		} else {
+			line = style.Render("  " + line)
+		}
+		lines = append(lines, line)
+
+		// Show description
+		lines = append(lines, "      "+descStyle.Render(opt.description))
+
+		// Show binding that will be added
+		bindLine := fmt.Sprintf("bind-key %s run-shell \"%s\"", opt.key, opt.command)
+		lines = append(lines, "      "+codeStyle.Render(bindLine))
+
+		// Show conflict warning if any
+		if opt.conflict != "" {
+			lines = append(lines, "      "+warnStyle.Render(fmt.Sprintf("⚠ Key '%s' is already bound: %s", opt.key, opt.conflict)))
+		}
+		if opt.isDefault {
+			lines = append(lines, "      "+warnStyle.Render(fmt.Sprintf("⚠ Replaces tmux default: %s", opt.defaultDesc)))
+			lines = append(lines, "      "+descStyle.Render("atmux sessions -p is a more powerful replacement with popup support"))
+		}
+
+		lines = append(lines, "")
 	}
-	lines = append(lines, yesBtn)
-	lines = append(lines, noBtn)
+
+	// Count how many are enabled
+	enabledCount := 0
+	for _, opt := range m.keybindOptions {
+		if opt.enabled {
+			enabledCount++
+		}
+	}
+
+	addBtn := fmt.Sprintf("  Add selected (%d)", enabledCount)
+	skipBtn := "  Skip"
+	if m.cursor == len(m.keybindOptions) {
+		addBtn = selectedStyle.Render(fmt.Sprintf("> Add selected (%d)", enabledCount))
+	} else if m.cursor == len(m.keybindOptions)+1 {
+		skipBtn = selectedStyle.Render("> Skip")
+	}
+	lines = append(lines, addBtn)
+	lines = append(lines, skipBtn)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
 	return lipgloss.Place(m.width, m.height,
@@ -667,22 +792,13 @@ func (m onboardModel) viewKeybind() string {
 		boxStyle.Render(content))
 }
 
-// addKeybinding adds the tmux keybinding to ~/.tmux.conf
-// This reuses the logic from cmd/keybind.go
-func (m *onboardModel) addKeybinding() error {
-	// Get tmux config path
+// addKeybindings adds the selected tmux keybindings to ~/.tmux.conf
+func (m *onboardModel) addKeybindings() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("could not determine home directory: %w", err)
 	}
 	tmuxConfPath := filepath.Join(home, ".tmux.conf")
-
-	// Build the binding line (default: prefix + S -> atmux browse)
-	keybindKey := "S"
-	keybindCommand := "browse"
-	bindingLine := fmt.Sprintf("bind-key %s run-shell \"atmux %s\"", keybindKey, keybindCommand)
-	commentLine := "# atmux: open session browser popup"
-	fullBinding := fmt.Sprintf("\n%s\n%s\n", commentLine, bindingLine)
 
 	// Read existing config (if any)
 	existingContent := ""
@@ -694,24 +810,46 @@ func (m *onboardModel) addKeybinding() error {
 		existingContent = string(content)
 	}
 
-	// Check if exact binding already exists
-	if strings.Contains(existingContent, bindingLine) {
-		// Already exists, nothing to do
+	// Build all selected binding lines
+	var toAdd []string
+	for i, opt := range m.keybindOptions {
+		if !opt.enabled {
+			continue
+		}
+		bindingLine := fmt.Sprintf("bind-key %s run-shell \"%s\"", opt.key, opt.command)
+		// Skip if exact binding already exists
+		if strings.Contains(existingContent, bindingLine) {
+			// Mark as added anyway since it's already there
+			if i == 0 {
+				m.browseBindAdded = true
+			} else {
+				m.sessionsBindAdded = true
+			}
+			continue
+		}
+		commentLine := fmt.Sprintf("# atmux: %s (%s)", opt.label, opt.description)
+		toAdd = append(toAdd, commentLine, bindingLine)
+		if i == 0 {
+			m.browseBindAdded = true
+			m.browseBindEnabled = true
+		} else {
+			m.sessionsBindAdded = true
+			m.sessionsBindEnabled = true
+		}
+	}
+
+	if len(toAdd) == 0 {
 		return nil
 	}
 
-	// Check for duplicate bindings (warn but proceed in onboard)
-	if isDuplicate, _ := findDuplicateKeybinding(existingContent, keybindKey); isDuplicate {
-		// In onboard flow, we proceed anyway (user explicitly chose to add)
-	}
-
-	// Append to file
+	// Append all bindings at once
 	f, err := os.OpenFile(tmuxConfPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("could not open %s for writing: %w", tmuxConfPath, err)
 	}
 	defer f.Close()
 
+	fullBinding := "\n" + strings.Join(toAdd, "\n") + "\n"
 	if _, err := f.WriteString(fullBinding); err != nil {
 		return fmt.Errorf("could not write to %s: %w", tmuxConfPath, err)
 	}
