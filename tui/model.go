@@ -39,6 +39,7 @@ type Options struct {
 	PopupMode       bool
 	DebugMode       bool
 	MobileMode      bool // Force mobile layout (auto-detected if width < 60)
+	Executors       []tmux.TmuxExecutor // Executors for multi-host browsing (nil = local only)
 }
 
 // Model is the main TUI state
@@ -69,6 +70,11 @@ type Model struct {
 
 	// Options
 	options Options
+
+	// Multi-host support
+	executors  []tmux.TmuxExecutor // Executors (nil = local-only)
+	hostTrees  []tmux.HostTree     // Per-host tree data (used for routing)
+	hostErrors map[string]error    // Per-host errors from last fetch
 
 	// Status
 	lastError     error
@@ -104,6 +110,7 @@ type Model struct {
 	killNodeType   string // Type of node being killed (session/window/pane)
 	killNodeTarget string // Target of node being killed
 	killNodeName   string // Name of node being killed (for display)
+	killNodeHost   string // Host of node being killed (for executor routing)
 
 	// Context menu state
 	contextMenu *ContextMenu // Active context menu, nil if not showing
@@ -140,6 +147,7 @@ func NewModel(opts Options) Model {
 		previewPort:      vp,
 		focused:          FocusTree,
 		options:          opts,
+		executors:        opts.Executors,
 		flatNodes:        []*tmux.TreeNode{},
 		historyIndex:     -1,
 		sendMethod:       tmux.SendMethodEnterDelayed, // 500ms delay works for both Claude and Codex
@@ -148,19 +156,32 @@ func NewModel(opts Options) Model {
 		expanded:         map[string]bool{},
 		mobileMode:       opts.MobileMode,
 		mobileForcedMode: opts.MobileMode,
+		hostErrors:       map[string]error{},
 	}
 }
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
-		fetchTree,
+		m.fetchTreeCmd(),
 		fetchRecentSessions,
 		tea.SetWindowTitle("atmux browse"),
 	)
 }
 
-// fetchTree fetches the tmux tree structure
+// fetchTreeCmd returns a command that fetches the tree, using executors if available.
+func (m *Model) fetchTreeCmd() tea.Cmd {
+	if len(m.executors) > 0 {
+		execs := m.executors
+		return func() tea.Msg {
+			hostTrees := tmux.FetchTreeWithExecutors(execs)
+			return MultiTreeRefreshedMsg{HostTrees: hostTrees}
+		}
+	}
+	return fetchTree
+}
+
+// fetchTree fetches the tmux tree structure (local only)
 func fetchTree() tea.Msg {
 	tree, err := tmux.FetchTree()
 	return TreeRefreshedMsg{Tree: tree, Err: err}
@@ -249,10 +270,26 @@ func fetchPreview(target string) tea.Cmd {
 	}
 }
 
+// fetchPreviewWithExecutor fetches pane content via a specific executor.
+func fetchPreviewWithExecutor(target string, exec tmux.TmuxExecutor) tea.Cmd {
+	return func() tea.Msg {
+		content, err := tmux.CapturePaneWithExecutor(target, exec)
+		return PreviewUpdatedMsg{Content: content, Target: target, Err: err}
+	}
+}
+
 // sendCommand sends a command to a pane using a specific method
 func sendCommand(target, command string, method tmux.SendMethod) tea.Cmd {
 	return func() tea.Msg {
 		err := tmux.SendCommandWithMethod(target, command, method)
+		return CommandSentMsg{Target: target, Command: command, Err: err}
+	}
+}
+
+// sendCommandWithExecutor sends a command via a specific executor.
+func sendCommandWithExecutor(target, command string, method tmux.SendMethod, exec tmux.TmuxExecutor) tea.Cmd {
+	return func() tea.Msg {
+		err := tmux.SendCommandWithMethodAndExecutor(target, command, method, exec)
 		return CommandSentMsg{Target: target, Command: command, Err: err}
 	}
 }
@@ -265,10 +302,26 @@ func sendEscape(target string) tea.Cmd {
 	}
 }
 
+// sendEscapeWithExecutor sends an escape key via a specific executor.
+func sendEscapeWithExecutor(target string, exec tmux.TmuxExecutor) tea.Cmd {
+	return func() tea.Msg {
+		err := tmux.SendEscapeWithExecutor(target, exec)
+		return CommandSentMsg{Target: target, Command: "Escape", Err: err}
+	}
+}
+
 // killTarget kills a session, window, or pane.
 func killTarget(nodeType, target string) tea.Cmd {
 	return func() tea.Msg {
 		err := tmux.KillTarget(nodeType, target)
+		return KillCompletedMsg{NodeType: nodeType, Target: target, Err: err}
+	}
+}
+
+// killTargetWithExecutor kills a session, window, or pane via a specific executor.
+func killTargetWithExecutor(nodeType, target string, exec tmux.TmuxExecutor) tea.Cmd {
+	return func() tea.Msg {
+		err := tmux.KillTargetWithExecutor(nodeType, target, exec)
 		return KillCompletedMsg{NodeType: nodeType, Target: target, Err: err}
 	}
 }
@@ -288,6 +341,16 @@ func (m *Model) selectedNode() *tmux.TreeNode {
 	return nil
 }
 
+// nodeForTarget returns the first node matching the given target.
+func (m *Model) nodeForTarget(target string) *tmux.TreeNode {
+	for _, node := range m.flatNodes {
+		if node.Target == target {
+			return node
+		}
+	}
+	return nil
+}
+
 // rebuildFlatNodes rebuilds the flat node list from the tree
 func (m *Model) rebuildFlatNodes() {
 	if m.tree == nil {
@@ -303,8 +366,8 @@ func (m *Model) toggleExpand() {
 	if node == nil {
 		return
 	}
-	if node.Type == "session" || node.Type == "window" {
-		key := nodeKey(node.Type, node.Target)
+	if node.Type == "session" || node.Type == "window" || node.Type == "host" {
+		key := m.expandKey(node)
 		expanded := node.Expanded
 		if val, ok := m.expanded[key]; ok {
 			expanded = val
@@ -312,6 +375,21 @@ func (m *Model) toggleExpand() {
 		m.expanded[key] = !expanded
 		m.rebuildFlatNodes()
 	}
+}
+
+// expandKey returns the expansion key for a node, including host prefix for multi-host mode.
+func (m *Model) expandKey(node *tmux.TreeNode) string {
+	if node.Type == "host" {
+		return nodeKey("host", node.Target)
+	}
+	if len(m.hostTrees) > 0 {
+		hostLabel := node.Host
+		if hostLabel == "" {
+			hostLabel = "local"
+		}
+		return nodeKey(node.Type, hostLabel+"/"+node.Target)
+	}
+	return nodeKey(node.Type, node.Target)
 }
 
 // moveSelection moves selection up or down, transitioning between tree and recent sections.
@@ -533,6 +611,12 @@ func (m *Model) isExpanded(nodeType, target string, defaultValue bool) bool {
 }
 
 func (m *Model) buildFlatNodes() []*tmux.TreeNode {
+	// Multi-host mode: build from hostTrees with host grouping
+	if len(m.hostTrees) > 0 {
+		return m.buildMultiHostFlatNodes()
+	}
+
+	// Single-host (local) mode: build from m.tree
 	var nodes []*tmux.TreeNode
 	for _, sess := range m.tree.Sessions {
 		sessExpanded := m.isExpanded("session", sess.Name, true)
@@ -585,6 +669,165 @@ func (m *Model) buildFlatNodes() []*tmux.TreeNode {
 	}
 
 	return nodes
+}
+
+// buildMultiHostFlatNodes builds flat nodes from multiple host trees with host headers.
+func (m *Model) buildMultiHostFlatNodes() []*tmux.TreeNode {
+	var nodes []*tmux.TreeNode
+
+	for _, ht := range m.hostTrees {
+		hostLabel := ht.Host
+		if hostLabel == "" {
+			hostLabel = "local"
+		}
+
+		hostKey := "host:" + hostLabel
+		hostExpanded := m.isExpanded("host", hostKey, true)
+
+		hostNode := &tmux.TreeNode{
+			Type:     "host",
+			Name:     hostLabel,
+			Target:   hostKey,
+			Expanded: hostExpanded,
+			Level:    0,
+			Host:     ht.Host,
+		}
+		nodes = append(nodes, hostNode)
+
+		if ht.Err != nil {
+			// Show error node for unreachable hosts
+			if hostExpanded {
+				errNode := &tmux.TreeNode{
+					Type:  "pane", // Use pane type for leaf rendering
+					Name:  "unreachable: " + ht.Err.Error(),
+					Level: 1,
+					Host:  ht.Host,
+				}
+				nodes = append(nodes, errNode)
+			}
+			continue
+		}
+
+		if ht.Tree == nil || !hostExpanded {
+			continue
+		}
+
+		for _, sess := range ht.Tree.Sessions {
+			sessExpanded := m.isExpanded("session", hostLabel+"/"+sess.Name, true)
+			sessNode := &tmux.TreeNode{
+				Type:     "session",
+				Name:     sess.Name,
+				Target:   sess.Name,
+				Expanded: sessExpanded,
+				Level:    1,
+				Attached: sess.Attached,
+				Host:     ht.Host,
+			}
+			nodes = append(nodes, sessNode)
+
+			if sessExpanded {
+				for _, win := range sess.Windows {
+					winTarget := sess.Name + ":" + strconv.Itoa(win.Index)
+					winExpanded := m.isExpanded("window", hostLabel+"/"+winTarget, true)
+					winNode := &tmux.TreeNode{
+						Type:     "window",
+						Name:     win.Name,
+						Target:   winTarget,
+						Expanded: winExpanded,
+						Level:    2,
+						Active:   win.Active,
+						Host:     ht.Host,
+					}
+					sessNode.Children = append(sessNode.Children, winNode)
+					nodes = append(nodes, winNode)
+
+					if winExpanded {
+						for _, pane := range win.Panes {
+							paneNode := &tmux.TreeNode{
+								Type:   "pane",
+								Name:   pane.Title,
+								Target: pane.Target,
+								Level:  3,
+								Active: pane.Active,
+								Host:   ht.Host,
+							}
+							if paneNode.Name == "" {
+								paneNode.Name = pane.Command
+							}
+							if paneNode.Name == "" {
+								paneNode.Name = "pane " + strconv.Itoa(pane.Index)
+							}
+							winNode.Children = append(winNode.Children, paneNode)
+							nodes = append(nodes, paneNode)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nodes
+}
+
+// executorForHost returns the executor for the given host label.
+// Returns nil if no matching executor is found.
+func (m *Model) executorForHost(host string) tmux.TmuxExecutor {
+	for _, ht := range m.hostTrees {
+		if ht.Host == host && ht.Executor != nil {
+			return ht.Executor
+		}
+	}
+	return nil
+}
+
+// fetchPreviewForNode returns the appropriate preview command for a node,
+// routing through the correct executor for remote nodes.
+func (m *Model) fetchPreviewForNode(node *tmux.TreeNode) tea.Cmd {
+	if node == nil || node.Type != "pane" {
+		return nil
+	}
+	if node.Host != "" {
+		if exec := m.executorForHost(node.Host); exec != nil {
+			return fetchPreviewWithExecutor(node.Target, exec)
+		}
+	}
+	return fetchPreview(node.Target)
+}
+
+// sendCommandForNode sends a command to the correct executor for a node.
+func (m *Model) sendCommandForNode(node *tmux.TreeNode, command string) tea.Cmd {
+	if node == nil || node.Type != "pane" {
+		return nil
+	}
+	if node.Host != "" {
+		if exec := m.executorForHost(node.Host); exec != nil {
+			return sendCommandWithExecutor(node.Target, command, m.sendMethod, exec)
+		}
+	}
+	return sendCommand(node.Target, command, m.sendMethod)
+}
+
+// sendEscapeForNode sends escape to the correct executor for a node.
+func (m *Model) sendEscapeForNode(node *tmux.TreeNode) tea.Cmd {
+	if node == nil || node.Type != "pane" {
+		return nil
+	}
+	if node.Host != "" {
+		if exec := m.executorForHost(node.Host); exec != nil {
+			return sendEscapeWithExecutor(node.Target, exec)
+		}
+	}
+	return sendEscape(node.Target)
+}
+
+// killTargetForNode kills a target via the correct executor.
+func (m *Model) killTargetForNode(nodeType, target, host string) tea.Cmd {
+	if host != "" {
+		if exec := m.executorForHost(host); exec != nil {
+			return killTargetWithExecutor(nodeType, target, exec)
+		}
+	}
+	return killTarget(nodeType, target)
 }
 
 // Run starts the TUI

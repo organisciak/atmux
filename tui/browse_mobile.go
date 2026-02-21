@@ -365,7 +365,7 @@ func (m Model) handleMobileKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "y", "Y":
 			m.confirmKill = false
-			return m, killTarget(m.killNodeType, m.killNodeTarget)
+			return m, m.killTargetForNode(m.killNodeType, m.killNodeTarget, m.killNodeHost)
 		case "n", "N", "esc":
 			m.confirmKill = false
 			return m, nil
@@ -409,10 +409,10 @@ func (m Model) handleMobileKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "r":
-		return m, fetchTree
+		return m, m.fetchTreeCmd()
 	case "n":
 		// New session - for now just refresh (could add new session wizard later)
-		return m, fetchTree
+		return m, m.fetchTreeCmd()
 	}
 
 	return m, nil
@@ -480,7 +480,7 @@ func (m Model) handleMobileMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				}
 			case MobileButtonNew:
 				// Refresh for now
-				return m, fetchTree
+				return m, m.fetchTreeCmd()
 			}
 			return m, nil
 		}

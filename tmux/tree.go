@@ -86,6 +86,184 @@ func FetchTree() (*Tree, error) {
 	return tree, nil
 }
 
+// HostTree holds the tree data for a single host (executor).
+type HostTree struct {
+	Host     string       // Host label ("" for local)
+	Tree     *Tree        // Tree data (nil if fetch failed)
+	Err      error        // Error from fetching (non-fatal for remotes)
+	Executor TmuxExecutor // The executor used to fetch this tree
+}
+
+// FetchTreeWithExecutors queries multiple executors and returns per-host trees.
+// Remote failures are captured as HostTree.Err rather than aborting.
+func FetchTreeWithExecutors(executors []TmuxExecutor) []HostTree {
+	results := make([]HostTree, len(executors))
+	for i, exec := range executors {
+		results[i] = HostTree{
+			Host:     exec.HostLabel(),
+			Executor: exec,
+		}
+		tree, err := fetchTreeWithExecutor(exec)
+		if err != nil {
+			results[i].Err = err
+			continue
+		}
+		results[i].Tree = tree
+	}
+	return results
+}
+
+// fetchTreeWithExecutor fetches the full tree for a single executor.
+func fetchTreeWithExecutor(exec TmuxExecutor) (*Tree, error) {
+	tree := &Tree{}
+
+	// Get all sessions
+	sessions, err := listAllSessionsWithExecutor(exec)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, sess := range sessions {
+		windows, err := listWindowsWithExecutor(exec, sess.Name)
+		if err != nil {
+			continue
+		}
+
+		for i := range windows {
+			panes, err := listPanesWithExecutor(exec, sess.Name, windows[i].Index)
+			if err != nil {
+				continue
+			}
+			windows[i].Panes = panes
+		}
+
+		sess.Windows = windows
+		tree.Sessions = append(tree.Sessions, sess)
+	}
+
+	return tree, nil
+}
+
+// listAllSessionsWithExecutor returns all tmux sessions via the given executor.
+func listAllSessionsWithExecutor(exec TmuxExecutor) ([]TmuxSession, error) {
+	output, err := exec.Output("list-sessions", "-F", "#{session_name}:#{session_attached}")
+	if err != nil {
+		if isNoServerError(err) {
+			return []TmuxSession{}, nil
+		}
+		return nil, err
+	}
+
+	var sessions []TmuxSession
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		sessions = append(sessions, TmuxSession{
+			Name:     parts[0],
+			Attached: parts[1] == "1",
+		})
+	}
+	return sessions, nil
+}
+
+// listWindowsWithExecutor returns all windows for a session via the given executor.
+func listWindowsWithExecutor(exec TmuxExecutor, sessionName string) ([]Window, error) {
+	output, err := exec.Output("list-windows", "-t", sessionName,
+		"-F", "#{window_id}:#{window_index}:#{window_name}:#{window_active}")
+	if err != nil {
+		return nil, err
+	}
+
+	var windows []Window
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 4)
+		if len(parts) < 4 {
+			continue
+		}
+		idx, _ := strconv.Atoi(parts[1])
+		windows = append(windows, Window{
+			ID:     parts[0],
+			Index:  idx,
+			Name:   parts[2],
+			Active: parts[3] == "1",
+		})
+	}
+	return windows, nil
+}
+
+// listPanesWithExecutor returns all panes for a window via the given executor.
+func listPanesWithExecutor(exec TmuxExecutor, sessionName string, windowIndex int) ([]Pane, error) {
+	target := sessionName + ":" + strconv.Itoa(windowIndex)
+	output, err := exec.Output("list-panes", "-t", target,
+		"-F", "#{pane_id}:#{pane_index}:#{pane_title}:#{pane_current_command}:#{pane_active}:#{pane_width}:#{pane_height}")
+	if err != nil {
+		return nil, err
+	}
+
+	var panes []Pane
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 7)
+		if len(parts) < 7 {
+			continue
+		}
+		idx, _ := strconv.Atoi(parts[1])
+		width, _ := strconv.Atoi(parts[5])
+		height, _ := strconv.Atoi(parts[6])
+
+		paneTarget := target + "." + parts[1]
+		panes = append(panes, Pane{
+			ID:      parts[0],
+			Index:   idx,
+			Title:   parts[2],
+			Command: parts[3],
+			Active:  parts[4] == "1",
+			Width:   width,
+			Height:  height,
+			Target:  paneTarget,
+		})
+	}
+	return panes, nil
+}
+
+// CapturePaneWithExecutor captures the content of a pane via the given executor.
+func CapturePaneWithExecutor(target string, exec TmuxExecutor) (string, error) {
+	output, err := exec.Output("capture-pane", "-t", target, "-p", "-e")
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
+
+// SendEscapeWithExecutor sends an Escape key to a pane via the given executor.
+func SendEscapeWithExecutor(target string, exec TmuxExecutor) error {
+	return exec.Run("send-keys", "-t", target, "Escape")
+}
+
+// KillTargetWithExecutor kills a session, window, or pane via the given executor.
+func KillTargetWithExecutor(nodeType, target string, exec TmuxExecutor) error {
+	switch nodeType {
+	case "session":
+		return exec.Run("kill-session", "-t", target)
+	case "window":
+		return exec.Run("kill-window", "-t", target)
+	case "pane":
+		return exec.Run("kill-pane", "-t", target)
+	default:
+		return nil
+	}
+}
+
 // listAllSessions returns all tmux sessions (not just agent-* ones)
 func listAllSessions() ([]TmuxSession, error) {
 	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}:#{session_attached}")
