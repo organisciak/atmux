@@ -146,14 +146,25 @@ func (e *RemoteExecutor) RunWithDir(dir string, args ...string) error {
 	return e.Run(args...)
 }
 
+// moshAvailable checks whether the mosh binary is on PATH.
+func moshAvailable() bool {
+	_, err := exec.LookPath("mosh")
+	return err == nil
+}
+
 func (e *RemoteExecutor) Interactive(args ...string) error {
 	if e.AttachMethod == "mosh" {
+		if !moshAvailable() {
+			fmt.Fprintf(os.Stderr, "Warning: mosh not found on PATH. Install mosh or set attach_method=ssh in your config.\nFalling back to SSH for %s.\n", e.Host)
+			return e.interactiveSSH(args...)
+		}
 		return e.interactiveMosh(args...)
 	}
 	return e.interactiveSSH(args...)
 }
 
-func (e *RemoteExecutor) interactiveSSH(args ...string) error {
+// buildSSHInteractiveArgs constructs the argument list for an interactive SSH attach.
+func (e *RemoteExecutor) buildSSHInteractiveArgs(args ...string) []string {
 	sshArgs := []string{
 		"-t", // Force pseudo-terminal
 		"-p", strconv.Itoa(e.Port),
@@ -161,28 +172,44 @@ func (e *RemoteExecutor) interactiveSSH(args ...string) error {
 		"tmux",
 	}
 	sshArgs = append(sshArgs, args...)
+	return sshArgs
+}
+
+func (e *RemoteExecutor) interactiveSSH(args ...string) error {
+	sshArgs := e.buildSSHInteractiveArgs(args...)
 
 	cmd := exec.Command("ssh", sshArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("interactive SSH to %s failed: %w", e.Host, err)
+	}
+	return nil
 }
 
-func (e *RemoteExecutor) interactiveMosh(args ...string) error {
-	// mosh user@host -- tmux attach-session -t name
+// buildMoshArgs constructs the argument list for an interactive mosh attach.
+func (e *RemoteExecutor) buildMoshArgs(args ...string) []string {
 	moshArgs := []string{e.Host, "--", "tmux"}
 	moshArgs = append(moshArgs, args...)
 
 	if e.Port != defaultSSHPort {
 		moshArgs = append([]string{"--ssh=ssh -p " + strconv.Itoa(e.Port)}, moshArgs...)
 	}
+	return moshArgs
+}
+
+func (e *RemoteExecutor) interactiveMosh(args ...string) error {
+	moshArgs := e.buildMoshArgs(args...)
 
 	cmd := exec.Command("mosh", moshArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("mosh connection to %s failed: %w", e.Host, err)
+	}
+	return nil
 }
 
 func (e *RemoteExecutor) RunGeneric(command string, args ...string) ([]byte, error) {
