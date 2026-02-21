@@ -11,6 +11,11 @@ type TreeRefreshedMsg struct {
 	Err  error
 }
 
+// MultiTreeRefreshedMsg is sent when multi-executor tree data is fetched
+type MultiTreeRefreshedMsg struct {
+	HostTrees []tmux.HostTree
+}
+
 // PreviewUpdatedMsg is sent when pane preview is captured
 type PreviewUpdatedMsg struct {
 	Content string

@@ -53,10 +53,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Fetch preview for selected node
 			if node := m.selectedNode(); node != nil && node.Type == "pane" {
-				cmds = append(cmds, fetchPreview(node.Target))
+				cmds = append(cmds, m.fetchPreviewForNode(node))
 			}
 		}
 		// Schedule next refresh
+		if m.options.RefreshInterval > 0 {
+			cmds = append(cmds, tickCmd(m.options.RefreshInterval))
+		}
+		return m, tea.Batch(cmds...)
+
+	case MultiTreeRefreshedMsg:
+		m.hostTrees = msg.HostTrees
+		// Build a merged tree for filterRecentSessions compatibility
+		merged := &tmux.Tree{}
+		m.hostErrors = map[string]error{}
+		for _, ht := range msg.HostTrees {
+			if ht.Err != nil {
+				label := ht.Host
+				if label == "" {
+					label = "local"
+				}
+				m.hostErrors[label] = ht.Err
+				continue
+			}
+			if ht.Tree != nil {
+				merged.Sessions = append(merged.Sessions, ht.Tree.Sessions...)
+			}
+		}
+		m.tree = merged
+		m.rebuildFlatNodes()
+		m.calculateButtonZones()
+		m.lastError = nil
+		m.filterRecentSessions()
+
+		if node := m.selectedNode(); node != nil && node.Type == "pane" {
+			cmds = append(cmds, m.fetchPreviewForNode(node))
+		}
 		if m.options.RefreshInterval > 0 {
 			cmds = append(cmds, tickCmd(m.options.RefreshInterval))
 		}
@@ -112,18 +144,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastError = msg.Err
 		} else {
 			m.lastSent = msg.Command + " -> " + msg.Target
-			// Refresh preview after sending
-			cmds = append(cmds, fetchPreview(msg.Target))
+			// Refresh preview after sending (route through executor if applicable)
+			if node := m.nodeForTarget(msg.Target); node != nil {
+				cmds = append(cmds, m.fetchPreviewForNode(node))
+			} else {
+				cmds = append(cmds, fetchPreview(msg.Target))
+			}
 		}
 		return m, tea.Batch(cmds...)
 
 	case TickMsg:
 		// Auto-refresh tree and recent sessions
-		cmds = append(cmds, fetchTree)
+		cmds = append(cmds, m.fetchTreeCmd())
 		cmds = append(cmds, fetchRecentSessions)
 		// Also refresh preview if we have a selected pane
 		if node := m.selectedNode(); node != nil && node.Type == "pane" {
-			cmds = append(cmds, fetchPreview(node.Target))
+			cmds = append(cmds, m.fetchPreviewForNode(node))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -132,7 +168,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastError = msg.Err
 		} else {
 			// Successfully killed, refresh tree and recent sessions
-			return m, tea.Batch(fetchTree, fetchRecentSessions)
+			return m, tea.Batch(m.fetchTreeCmd(), fetchRecentSessions)
 		}
 		return m, nil
 	}
@@ -191,7 +227,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "y", "Y":
 			// Confirm kill
 			m.confirmKill = false
-			return m, killTarget(m.killNodeType, m.killNodeTarget)
+			return m, m.killTargetForNode(m.killNodeType, m.killNodeTarget, m.killNodeHost)
 		case "n", "N", "esc":
 			// Cancel kill
 			m.confirmKill = false
@@ -273,7 +309,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "r":
 		if m.focused != FocusInput {
-			return m, tea.Batch(fetchTree, fetchRecentSessions)
+			return m, tea.Batch(m.fetchTreeCmd(), fetchRecentSessions)
 		}
 	case "m":
 		// Cycle through send methods (debug mode)
@@ -341,16 +377,17 @@ func (m Model) handleTreeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.commandInput.Value()
 			if cmd != "" {
 				m.pushInputHistory(cmd)
-				return m, sendCommand(node.Target, cmd, m.sendMethod)
+				return m, m.sendCommandForNode(node, cmd)
 			}
 		}
 	case "x", "d":
 		// Kill selected session/window/pane (with confirmation)
-		if node := m.selectedNode(); node != nil {
+		if node := m.selectedNode(); node != nil && node.Type != "host" {
 			m.confirmKill = true
 			m.killNodeType = node.Type
 			m.killNodeTarget = node.Target
 			m.killNodeName = node.Name
+			m.killNodeHost = node.Host
 			return m, nil
 		}
 	case "c":
@@ -440,7 +477,7 @@ func (m Model) handleInputKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.commandInput.Value()
 			if cmd != "" {
 				m.pushInputHistory(cmd)
-				return m, sendCommand(node.Target, cmd, m.sendMethod)
+				return m, m.sendCommandForNode(node, cmd)
 			}
 		}
 		return m, nil
@@ -560,10 +597,16 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 			cmd := m.commandInput.Value()
 			if cmd != "" {
 				m.pushInputHistory(cmd)
+				if node := m.nodeForTarget(zone.target); node != nil {
+					return m, m.sendCommandForNode(node, cmd)
+				}
 				return m, sendCommand(zone.target, cmd, m.sendMethod)
 			}
 			return m, nil
 		case buttonActionEscape:
+			if node := m.nodeForTarget(zone.target); node != nil {
+				return m, m.sendEscapeForNode(node)
+			}
 			return m, sendEscape(zone.target)
 		case buttonActionAttach:
 			// Extract session from target and attach
@@ -578,13 +621,14 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 			m.showHelp = !m.showHelp
 			return m, nil
 		case buttonActionRefresh:
-			return m, fetchTree
+			return m, m.fetchTreeCmd()
 		case buttonActionKillHint:
-			if node := m.selectedNode(); node != nil {
+			if node := m.selectedNode(); node != nil && node.Type != "host" {
 				m.confirmKill = true
 				m.killNodeType = node.Type
 				m.killNodeTarget = node.Target
 				m.killNodeName = node.Name
+				m.killNodeHost = node.Host
 			}
 			return m, nil
 		case buttonActionFocusInput:
@@ -697,7 +741,7 @@ func (m *Model) cycleFocus(delta int) {
 func (m *Model) updatePreviewForSelection() tea.Cmd {
 	if node := m.selectedNode(); node != nil && node.Type == "pane" {
 		m.previewTarget = node.Target
-		return fetchPreview(node.Target)
+		return m.fetchPreviewForNode(node)
 	}
 	return nil
 }
@@ -912,6 +956,7 @@ func (m Model) executeMenuAction(action string) (tea.Model, tea.Cmd) {
 			m.killNodeType = nodeType
 			m.killNodeTarget = target
 			m.killNodeName = node.Name
+			m.killNodeHost = node.Host
 		}
 		return m, nil
 

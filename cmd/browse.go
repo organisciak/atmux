@@ -15,6 +15,7 @@ var (
 	refreshInterval int
 	debugMode       bool
 	mobileMode      bool
+	browseRemote    string
 )
 
 var browseCmd = &cobra.Command{
@@ -66,11 +67,12 @@ func init() {
 	browseCmd.Flags().IntVarP(&refreshInterval, "refresh", "r", 2, "Auto-refresh interval in seconds (0 to disable)")
 	browseCmd.Flags().BoolVarP(&debugMode, "debug", "d", false, "Enable debug mode to test different send methods")
 	browseCmd.Flags().BoolVarP(&mobileMode, "mobile", "m", false, "Mobile-optimized view for narrow terminals (auto-detected if width < 60)")
+	browseCmd.Flags().StringVar(&browseRemote, "remote", "", "Remote host(s) or aliases to include (comma-separated)")
 }
 
 func runBrowse(cmd *cobra.Command, args []string) error {
-	// Check if tmux server is running
-	if !tmuxServerRunning() {
+	// Check if tmux server is running (only required when no remote hosts)
+	if browseRemote == "" && !tmuxServerRunning() {
 		return fmt.Errorf("tmux server not running - start a tmux session first")
 	}
 
@@ -80,13 +82,24 @@ func runBrowse(cmd *cobra.Command, args []string) error {
 		return launchAsPopup("browse")
 	}
 
-	// Run TUI directly
+	// Build executors when --remote is specified
 	opts := tui.Options{
 		RefreshInterval: time.Duration(refreshInterval) * time.Second,
 		PopupMode:       false,
 		DebugMode:       debugMode,
 		MobileMode:      mobileMode,
 	}
+
+	if browseRemote != "" {
+		executors, err := buildExecutors(browseRemote)
+		if err != nil {
+			return fmt.Errorf("failed to build executors: %w", err)
+		}
+		defer closeExecutors(executors)
+		registerCleanupSignals(executors)
+		opts.Executors = executors
+	}
+
 	return tui.Run(opts)
 }
 
