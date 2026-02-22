@@ -20,7 +20,7 @@ cd ~/projects/my-app
 atmux
 # Detach from tmux: Ctrl-b d
 
-# optional: run `atmux init` to create an editable ./agent-tmux.conf
+# optional: run `atmux init` to create an editable .agent-tmux.conf
 
 # see all of your projects, whether active, attached, or inactive but previously run
 atmux sessions
@@ -41,9 +41,10 @@ brew uninstall atmux agent-tmux
 
 ## What you can do
 
-- Save and revive projects. atmux keeps a recent history of projects you ran, so you can jump back in with `atmux sessions` or `atmux open`.
+- Save and revive projects. atmux keeps a recent history of projects you ran, so you can jump back in with `atmux sessions`, `atmux recents`, or `atmux open`.
 - Move between sessions fast. The sessions list is a quick, clickable way to attach without hunting for names.
 - Control everything from one screen. `atmux browse` shows a tree of sessions, windows, and panes, lets you preview output, and send commands/escape to any pane without switching away.
+- Work across hosts. `atmux sessions --remote`, `atmux browse --remote`, and `atmux send --remote` support remote tmux workflows over SSH/mosh.
 - Customize per project. Add a `.agent-tmux.conf` and define exactly which windows and panes you want for that repo.
 - Enjoy quality-of-life extras like shell completions and popup-friendly UIs.
 
@@ -95,22 +96,24 @@ This creates a session named `agent-my-app` with:
 ### Commands
 
 ```bash
-atmux                 # Start or attach to session for current directory
-atmux sessions [NAME] # Interactive sessions list or attach directly by name
-atmux list            # Alias for sessions
-atmux attach NAME     # Alias for sessions NAME
-atmux list-sessions   # Alias for sessions
-atmux browse          # Interactive session browser with pane previews
-atmux open            # Quick TUI to jump into active or recent sessions
-atmux send TARGET TXT # Send text to a target pane (local or remote)
-atmux remote-project  # Create a reusable remote project entry in global config
-atmux kill NAME       # Kill a specific session
-atmux kill --all      # Kill all atmux sessions
-atmux init            # Create a .agent-tmux.conf template
-atmux history list    # Show recent sessions history
-atmux history remove  # Remove a specific history entry
-atmux history clear   # Clear history
-atmux version         # Show version info
+atmux                                   # Start/attach for current directory (or configured default action)
+atmux sessions [NAME]                   # Interactive sessions list or attach directly by name
+atmux sessions -p                       # Force popup sessions picker
+atmux browse                            # Tree browser with pane previews and command send
+atmux browse --remote=devbox            # Include remote host(s) in browse tree
+atmux recents                           # Browse and revive recent sessions
+atmux open                              # Quick numbered selector for active/recent sessions
+atmux send TARGET TXT                   # Send text to a local target pane
+atmux send --remote=devbox TARGET TXT   # Send to target pane on remote host(s)
+atmux remote-project NAME --host H --dir DIR [--session NAME]  # Add reusable remote project entry
+atmux keybind                           # Add tmux keybinding for browse/sessions popup
+atmux onboard                           # Run interactive setup wizard
+atmux schedule                          # Manage scheduled commands
+atmux init                              # Create a .agent-tmux.conf template
+atmux kill NAME                         # Kill a specific session
+atmux kill --all                        # Kill all atmux sessions
+atmux history list|remove|clear         # Manage session history entries
+atmux version                           # Show version info
 ```
 
 #### Browse mode
@@ -123,7 +126,8 @@ atmux browse
 - Live preview of selected pane output
 - Send commands (and Escape) to any pane from the same screen
 - Mouse and keyboard navigation
-- Optional popup mode: `atmux browse --popup`
+- Include remote hosts with `atmux browse --remote=devbox`
+- Inside tmux, `browse` opens as a popup by default (use `--no-popup` to disable)
 
 #### Sessions TUI
 
@@ -132,13 +136,36 @@ atmux sessions
 ```
 
 - Click or select a session to attach
-- Renders inline by default
+- Includes local sessions plus configured remote hosts
+- Renders inline by default (use `-p` for popup)
+- Optional host selection and attach strategy:
+
+```bash
+atmux sessions --remote=devbox,buildbox
+atmux sessions --strategy=new-window
+```
+
+#### Recents TUI
+
+```bash
+atmux recents
+```
+
+- Browse recent history and revive sessions quickly
+- Supports filtering (`/`), delete from history (`x`/`Delete`), and popup mode in tmux
+- Remote history entries reconnect using the saved host/method metadata
 
 #### Remote tmux sessions
 
-`atmux` includes remote tmux execution via SSH-backed executors. Today, this is exposed through `atmux send --remote`.
+`atmux` includes remote tmux execution via SSH-backed executors for sessions, browse, recents, and send workflows.
 
 ```bash
+# List/attach across local + remote hosts
+atmux sessions --remote=devbox
+
+# Browse remote panes (preview/send/kill from one tree)
+atmux browse --remote=devbox
+
 # Send to one remote host
 atmux send --remote=devbox agent-my-app:agents.0 "bd ready"
 
@@ -157,6 +184,7 @@ Behavior:
 - SSH ControlMaster connection reuse (`ControlPersist=300`)
 - 10 second timeout per remote tmux command
 - host keys accepted on first connect (`StrictHostKeyChecking=accept-new`)
+- interactive remote attach supports `remote_attach:ssh|mosh` (and `sessions --strategy=auto|replace|new-window`)
 
 For full details, see `docs/remote-sessions.md`.
 

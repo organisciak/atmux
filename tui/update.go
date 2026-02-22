@@ -659,7 +659,7 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 			m.focusRecent = false
 			node := m.flatNodes[clickedIdx]
 			m.selectedIndex = clickedIdx
-			if node.Type == "session" || node.Type == "window" {
+			if node.Type == "session" || node.Type == "window" || node.Type == "host" {
 				indent := node.Level * 2
 				icon := getNodeIcon(node.Type, node.Expanded, node.Active)
 				iconStartX := indent

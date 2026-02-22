@@ -441,3 +441,68 @@ func TestMouseClickIconTogglesExpand(t *testing.T) {
 		t.Fatalf("expected 1 node after icon click collapse, got %d", len(m.flatNodes))
 	}
 }
+
+func TestMouseClickIconTogglesHostExpand(t *testing.T) {
+	m := NewModel(Options{})
+	m.width = 120
+	m.height = 40
+	m.calculateLayout()
+	m.hostTrees = []tmux.HostTree{
+		{
+			Host: "",
+			Tree: &tmux.Tree{
+				Sessions: []tmux.TmuxSession{
+					{
+						Name: "local-sess",
+						Windows: []tmux.Window{
+							{Index: 0, Name: "local-win"},
+						},
+					},
+				},
+			},
+		},
+		{
+			Host: "devbox",
+			Tree: &tmux.Tree{
+				Sessions: []tmux.TmuxSession{
+					{
+						Name: "remote-sess",
+						Windows: []tmux.Window{
+							{Index: 0, Name: "remote-win"},
+						},
+					},
+				},
+			},
+		},
+	}
+	m.tree = &tmux.Tree{}
+	m.rebuildFlatNodes()
+
+	initialCount := len(m.flatNodes)
+	if initialCount < 6 {
+		t.Fatalf("expected expanded multi-host tree, got %d nodes", initialCount)
+	}
+
+	// Click the first host's `[-]` icon.
+	y := inputHeight + 2
+	updated, _ := m.handleLeftClick(2, y)
+	m = updated.(Model)
+
+	if len(m.flatNodes) >= initialCount {
+		t.Fatalf("expected fewer nodes after collapsing host, got %d (was %d)", len(m.flatNodes), initialCount)
+	}
+	if len(m.flatNodes) == 0 || m.flatNodes[0].Type != "host" || m.flatNodes[0].Expanded {
+		t.Fatal("expected first host node to remain visible and be collapsed")
+	}
+
+	foundSecondHost := false
+	for _, node := range m.flatNodes {
+		if node.Type == "host" && node.Name == "devbox" {
+			foundSecondHost = true
+			break
+		}
+	}
+	if !foundSecondHost {
+		t.Fatal("expected devbox host to remain visible after collapsing local host")
+	}
+}

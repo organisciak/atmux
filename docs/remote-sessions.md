@@ -13,14 +13,23 @@ The remote executor enables `atmux` commands to target tmux sessions that exist 
 
 ## Current user-facing support
 
-The currently exposed CLI feature is:
+Remote execution is currently exposed in multiple commands:
 
+- `atmux sessions [--remote=...] [--strategy=auto|replace|new-window]`
+- `atmux browse --remote=...`
 - `atmux send --remote=... <target> <text>`
+- `atmux recents` (remote history entries reconnect to their saved host)
 - `atmux remote-project [name] --host <host-or-alias> --dir <remote-dir> [--session <name>]`
 
 Examples:
 
 ```bash
+# List/attach across local + remote hosts
+atmux sessions --remote=devbox
+
+# Browse remote panes (preview/send/kill)
+atmux browse --remote=devbox
+
 # Single host
 atmux send --remote=devbox agent-my-app:agents.0 "bd ready"
 
@@ -30,9 +39,10 @@ atmux send --remote=user@host1,user@host2 agent-my-app:agents.0 "/compact"
 
 Important:
 
-- The `<target>` pane name is resolved on each remote host.
-- If one host fails, the command exits with an error for that host.
-- `--remote` in `send` currently creates direct SSH executors from the flag values.
+- `sessions` always includes local plus configured remote hosts; `--remote` adds explicit host(s)/alias(es).
+- `browse` includes remote hosts when `--remote` is provided.
+- In `send`, the `<target>` pane name is resolved on each remote host.
+- If one host fails during `send`, the command exits with an error for that host.
 
 ## Connection lifecycle
 
@@ -67,17 +77,14 @@ Cleanup:
 
 If a non-default SSH port is used with `mosh`, `--ssh=ssh -p <port>` is added.
 
-Note: the current CLI primarily uses remote execution for command sending. Interactive remote attach plumbing exists in the executor layer.
+This interactive path is used for remote attach flows in `sessions` and remote history revival in `recents`.
 
 ## Configuration status
 
 There is shared command-side plumbing for building executors from config (`cmd/remote.go`) and support for remote host metadata in session models.
 
-At the moment:
+Current config/state support:
 
-- `atmux send --remote` is the active remote workflow
-- `atmux remote-project` writes reusable remote project entries to global config
-- full remote session listing/attach via standard commands is not yet fully wired end-to-end
 - remote host aliases are configurable via `.agent-tmux.conf` and global config directives:
   - `remote_host:...`
   - `remote_alias:...`
@@ -88,6 +95,8 @@ At the moment:
   - `remote_project_host:...`
   - `remote_project_dir:...`
   - `remote_project_session:...`
+- `atmux remote-project` writes reusable remote project entries to global config.
+- Remote project entries are currently configuration metadata; there is not yet a dedicated "launch remote project by name" command.
 
 ## Prerequisites
 
@@ -97,7 +106,7 @@ At the moment:
 
 ## Troubleshooting
 
-If a remote send fails:
+If a remote command fails:
 
 1. Verify SSH connectivity:
    ```bash
