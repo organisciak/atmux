@@ -1,5 +1,9 @@
 # Repository Guidelines
 
+## Improvements to AGENTS.md
+
+Regularly check if AGENTS.md is up to date, and update if it's not. If you learn new useful things that help in understanding the development, add it here. never check in any updates to agents that you make to prevent accidental exfiltration. Always leave it for a human to review unless they explicitly tell you to check the specific file in. 
+
 ## Agent Orchestration
 - When spawning parallel task agents across worktrees, use lightweight/focused agents rather than heavyweight exploratory ones. Agents should start implementing immediately, not spend time exploring the codebase.
 - Always provide agents with specific file paths and clear scope to avoid excessive exploration phases.
