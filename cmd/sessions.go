@@ -26,6 +26,7 @@ var (
 	sessionsNoPopup        bool
 	sessionsNonInteractive bool
 	sessionsNoBeads        bool
+	sessionsNoStaleness    bool
 	sessionsRemote         string
 	sessionsStrategy       string
 )
@@ -37,6 +38,7 @@ func init() {
 	sessionsCmd.Flags().BoolVar(&sessionsNoPopup, "no-popup", false, "Disable popup mode (default: popup when inside tmux)")
 	sessionsCmd.Flags().BoolVarP(&sessionsNonInteractive, "non-interactive", "n", false, "Print sessions and exit (no TUI)")
 	sessionsCmd.Flags().BoolVar(&sessionsNoBeads, "no-beads", false, "Hide beads issue counts per session")
+	sessionsCmd.Flags().BoolVar(&sessionsNoStaleness, "no-staleness", false, "Disable staleness indicators and kill-stale")
 	sessionsCmd.Flags().StringVarP(&sessionsRemote, "remote", "r", "", "Remote host(s) or aliases to include (comma-separated)")
 	sessionsCmd.Flags().StringVar(&sessionsStrategy, "strategy", "", "Remote attach strategy: auto, replace, new-window")
 }
@@ -66,9 +68,10 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	}
 
 	result, err := tui.RunSessionsList(tui.SessionsOptions{
-		AltScreen: !sessionsInline,
-		Executors: executors,
-		ShowBeads: !sessionsNoBeads,
+		AltScreen:        !sessionsInline,
+		Executors:        executors,
+		ShowBeads:        !sessionsNoBeads,
+		DisableStaleness: sessionsNoStaleness,
 	})
 	if err != nil {
 		return err

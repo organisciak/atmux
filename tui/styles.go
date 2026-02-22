@@ -13,6 +13,11 @@ var (
 	errorColor     = lipgloss.Color("196") // Red
 	buttonColor    = lipgloss.Color("33")  // Blue
 
+	// Staleness colors
+	freshColor        = lipgloss.Color("82")  // green (same as activeColor)
+	gettingStaleColor = lipgloss.Color("220") // yellow/amber
+	staleColor        = lipgloss.Color("196") // red (same as errorColor)
+
 	// Dimmed prefix style for agent-/atmux- session names
 	agentPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243")) // Slightly dimmed
 

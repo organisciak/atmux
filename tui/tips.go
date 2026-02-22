@@ -59,6 +59,7 @@ var tips = []Tip{
 	{Text: "Project .agent-tmux.conf overrides global config", Contexts: nil},
 	{Text: "Set your default startup behavior in landing page", Contexts: []TipContext{TipLanding}},
 	{Text: "Run `atmux --reset-defaults` to restore landing page", Contexts: []TipContext{TipLanding}},
+	{Text: "Press S in sessions to kill all stale (red) sessions at once", Contexts: []TipContext{TipSessions}},
 	{Text: "Press s in browse view to send command to selected pane", Contexts: []TipContext{TipBrowse}},
 	{Text: "Ctrl+C twice to quit from any view", Contexts: nil},
 }

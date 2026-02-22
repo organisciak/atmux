@@ -96,6 +96,15 @@ type landingModel struct {
 	confirmKill     bool        // Whether kill confirmation is active
 	killSessionName string      // Session name pending kill confirmation
 	lineJump        lineJumpState
+
+	// Staleness
+	stalenessDisabled bool
+	freshThreshold    time.Duration
+	staleThreshold    time.Duration
+
+	// Section visibility (computed from window height)
+	showRecent  bool
+	showOptions bool
 }
 
 // landingKillMsg is returned after attempting to kill a session.
@@ -123,10 +132,25 @@ func newLandingModel(sessionName string) landingModel {
 		options[optionLanding] = true
 	}
 
+	// Load staleness config
+	var stalenessDisabled bool
+	var freshThreshold, staleThreshold time.Duration
+	if settings.Staleness != nil {
+		stalenessDisabled = settings.Staleness.Disabled
+		freshThreshold, staleThreshold = settings.Staleness.ParsedStalenessThresholds()
+	} else {
+		freshThreshold, staleThreshold = (&config.StalenessConfig{}).ParsedStalenessThresholds()
+	}
+
 	return landingModel{
-		sessionName:    sessionName,
-		focusedSection: sectionResume,
-		options:        options,
+		sessionName:       sessionName,
+		focusedSection:    sectionResume,
+		options:           options,
+		stalenessDisabled: stalenessDisabled,
+		freshThreshold:    freshThreshold,
+		staleThreshold:    staleThreshold,
+		showRecent:        true, // recomputed on WindowSizeMsg
+		showOptions:       true, // recomputed on WindowSizeMsg
 	}
 }
 
@@ -159,10 +183,10 @@ func (m landingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.confirmKill {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			switch keyMsg.String() {
-			case "y", "Y":
+			case "enter":
 				m.confirmKill = false
 				return m, m.killSelectedSession()
-			case "n", "N", "esc":
+			case "esc", "n", "N":
 				m.confirmKill = false
 				return m, nil
 			}
@@ -175,6 +199,7 @@ func (m landingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessions = msg.lines
 		m.lastError = msg.err
 		m.filterRecentSessions()
+		m.updateVisibility()
 		m.calculateClickZones()
 		return m, nil
 
@@ -184,6 +209,7 @@ func (m landingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.recentSessions = msg.entries
 			m.filterRecentSessions()
 		}
+		m.updateVisibility()
 		m.calculateClickZones()
 		return m, nil
 
@@ -211,12 +237,14 @@ func (m landingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedIndex = 0
 			}
 		}
+		m.updateVisibility()
 		m.calculateClickZones()
 		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.updateVisibility()
 		m.calculateClickZones()
 		return m, nil
 
@@ -247,6 +275,82 @@ func (m *landingModel) filterRecentSessions() {
 	m.recentSessions = filtered
 }
 
+// landingSessionTier classifies staleness for an active session on the landing page.
+func (m landingModel) landingSessionTier(activity int64) stalenessTier {
+	if m.stalenessDisabled || activity == 0 {
+		return tierFresh
+	}
+	return classifyStalenessTier(time.Since(time.Unix(activity, 0)), m.freshThreshold, m.staleThreshold)
+}
+
+// landingHistoryTier classifies staleness for a history entry on the landing page.
+func (m landingModel) landingHistoryTier(lastUsed time.Time) stalenessTier {
+	if m.stalenessDisabled || lastUsed.IsZero() {
+		return tierFresh
+	}
+	return classifyStalenessTier(time.Since(lastUsed), m.freshThreshold, m.staleThreshold)
+}
+
+// isSectionVisible reports whether the given section is rendered in the current layout.
+func (m landingModel) isSectionVisible(section int) bool {
+	switch section {
+	case sectionResume, sectionSessions:
+		return true // always shown
+	case sectionRecent:
+		return m.showRecent
+	case sectionOptions:
+		return m.showOptions
+	}
+	return false
+}
+
+// updateVisibility recomputes which optional sections fit on screen.
+func (m *landingModel) updateVisibility() {
+	m.showRecent = len(m.recentSessions) > 0
+	m.showOptions = true
+
+	if m.height <= 0 || m.width <= 0 {
+		return
+	}
+
+	// Measure core sections that are always shown
+	core := lipgloss.JoinVertical(lipgloss.Left,
+		m.renderTitle(),
+		m.renderResumeSection(),
+		m.renderSessionsSection(),
+	)
+	coreLines := strings.Count(core, "\n") + 1
+	statusReserve := 4 // approximate height for status bar / confirm
+	available := m.height - coreLines - statusReserve
+
+	// Try to fit recent section (higher priority than options)
+	m.showRecent = false
+	if len(m.recentSessions) > 0 && available > 0 {
+		recent := m.renderRecentSection()
+		recentLines := strings.Count(recent, "\n") + 1
+		if recentLines <= available {
+			m.showRecent = true
+			available -= recentLines
+		}
+	}
+
+	// Try to fit options section
+	m.showOptions = false
+	if available > 0 {
+		options := m.renderOptionsSection()
+		optionsLines := strings.Count(options, "\n") + 1
+		if optionsLines <= available {
+			m.showOptions = true
+		}
+	}
+
+	// If the currently focused section is now hidden, move focus
+	if !m.isSectionVisible(m.focusedSection) {
+		m.focusedSection = sectionSessions
+		m.selectedIndex = 0
+	}
+}
+
 // visibleRecentCount returns the number of recent sessions currently visible.
 func (m landingModel) visibleRecentCount() int {
 	if m.recentExpanded {
@@ -275,20 +379,28 @@ func (m landingModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case "tab":
-		// Move to next section (skip recent if empty)
-		m.focusedSection = (m.focusedSection + 1) % 4
-		if m.focusedSection == sectionRecent && len(m.recentSessions) == 0 {
-			m.focusedSection = sectionOptions
+		// Move to next visible section
+		next := (m.focusedSection + 1) % 4
+		for i := 0; i < 4; i++ {
+			if m.isSectionVisible(next) {
+				break
+			}
+			next = (next + 1) % 4
 		}
+		m.focusedSection = next
 		m.selectedIndex = 0
 		return m, nil
 
 	case "shift+tab":
-		// Move to previous section (skip recent if empty)
-		m.focusedSection = (m.focusedSection + 3) % 4
-		if m.focusedSection == sectionRecent && len(m.recentSessions) == 0 {
-			m.focusedSection = sectionSessions
+		// Move to previous visible section
+		prev := (m.focusedSection + 3) % 4
+		for i := 0; i < 4; i++ {
+			if m.isSectionVisible(prev) {
+				break
+			}
+			prev = (prev + 3) % 4
 		}
+		m.focusedSection = prev
 		m.selectedIndex = 0
 		return m, nil
 
@@ -355,14 +467,24 @@ func (m landingModel) deleteSelectedRecentEntry() tea.Cmd {
 func (m landingModel) moveUp() (tea.Model, tea.Cmd) {
 	switch m.focusedSection {
 	case sectionResume:
-		// Already at top, wrap to options section bottom
-		m.focusedSection = sectionOptions
-		m.selectedIndex = 2
+		// Wrap to bottom-most visible section
+		if m.showOptions {
+			m.focusedSection = sectionOptions
+			m.selectedIndex = 2
+		} else if m.showRecent && len(m.recentSessions) > 0 {
+			m.focusedSection = sectionRecent
+			m.selectedIndex = m.visibleRecentCount()
+			if !m.hasRecentFooter() {
+				m.selectedIndex = m.visibleRecentCount() - 1
+			}
+		} else if len(m.sessions) > 0 {
+			m.focusedSection = sectionSessions
+			m.selectedIndex = len(m.sessions) - 1
+		}
 	case sectionSessions:
 		if m.selectedIndex > 0 {
 			m.selectedIndex--
 		} else {
-			// Move to resume section
 			m.focusedSection = sectionResume
 			m.selectedIndex = 0
 		}
@@ -370,12 +492,11 @@ func (m landingModel) moveUp() (tea.Model, tea.Cmd) {
 		if m.selectedIndex > 0 {
 			m.selectedIndex--
 		} else {
-			// Move to sessions section (bottom)
+			// Move to sessions (always visible)
 			m.focusedSection = sectionSessions
 			if len(m.sessions) > 0 {
 				m.selectedIndex = len(m.sessions) - 1
 			} else {
-				// No sessions, go to resume
 				m.focusedSection = sectionResume
 				m.selectedIndex = 0
 			}
@@ -384,14 +505,11 @@ func (m landingModel) moveUp() (tea.Model, tea.Cmd) {
 		if m.selectedIndex > 0 {
 			m.selectedIndex--
 		} else {
-			// Move to recent section (bottom) or sessions if no recent
-			if len(m.recentSessions) > 0 {
+			// Move to previous visible section
+			if m.showRecent && len(m.recentSessions) > 0 {
 				m.focusedSection = sectionRecent
-				// Position at the last selectable item (either footer or last visible session)
 				m.selectedIndex = m.visibleRecentCount()
-				if m.hasRecentFooter() {
-					// Footer is selectable
-				} else {
+				if !m.hasRecentFooter() {
 					m.selectedIndex = m.visibleRecentCount() - 1
 				}
 			} else if len(m.sessions) > 0 {
@@ -412,11 +530,11 @@ func (m landingModel) moveDown() (tea.Model, tea.Cmd) {
 		// Move to sessions section
 		m.focusedSection = sectionSessions
 		m.selectedIndex = 0
-		// If no sessions, skip to recent or options
+		// If no sessions, skip to next visible section
 		if len(m.sessions) == 0 {
-			if len(m.recentSessions) > 0 {
+			if m.showRecent && len(m.recentSessions) > 0 {
 				m.focusedSection = sectionRecent
-			} else {
+			} else if m.showOptions {
 				m.focusedSection = sectionOptions
 			}
 		}
@@ -424,33 +542,38 @@ func (m landingModel) moveDown() (tea.Model, tea.Cmd) {
 		if m.selectedIndex < len(m.sessions)-1 {
 			m.selectedIndex++
 		} else {
-			// Move to recent section or options
-			if len(m.recentSessions) > 0 {
+			// Move to next visible section
+			if m.showRecent && len(m.recentSessions) > 0 {
 				m.focusedSection = sectionRecent
 				m.selectedIndex = 0
-			} else {
+			} else if m.showOptions {
 				m.focusedSection = sectionOptions
+				m.selectedIndex = 0
+			} else {
+				m.focusedSection = sectionResume
 				m.selectedIndex = 0
 			}
 		}
 	case sectionRecent:
-		// Total selectable items: visible sessions + footer (if any)
 		maxIdx := m.visibleRecentCount() - 1
 		if m.hasRecentFooter() {
-			maxIdx = m.visibleRecentCount() // footer is at index visibleRecentCount
+			maxIdx = m.visibleRecentCount()
 		}
 		if m.selectedIndex < maxIdx {
 			m.selectedIndex++
 		} else {
-			// Move to options section
-			m.focusedSection = sectionOptions
-			m.selectedIndex = 0
+			if m.showOptions {
+				m.focusedSection = sectionOptions
+				m.selectedIndex = 0
+			} else {
+				m.focusedSection = sectionResume
+				m.selectedIndex = 0
+			}
 		}
 	case sectionOptions:
 		if m.selectedIndex < 2 {
 			m.selectedIndex++
 		} else {
-			// Wrap to resume section
 			m.focusedSection = sectionResume
 			m.selectedIndex = 0
 		}
@@ -589,27 +712,20 @@ func (m landingModel) View() string {
 
 	var sections []string
 
-	// Title
-	title := m.renderTitle()
-	sections = append(sections, title)
+	// Core sections — always shown
+	sections = append(sections, m.renderTitle())
+	sections = append(sections, m.renderResumeSection())
+	sections = append(sections, m.renderSessionsSection())
 
-	// Resume section
-	resumeSection := m.renderResumeSection()
-	sections = append(sections, resumeSection)
-
-	// Sessions section
-	sessionsSection := m.renderSessionsSection()
-	sections = append(sections, sessionsSection)
-
-	// Recent sessions section (only if there are entries)
-	if len(m.recentSessions) > 0 {
-		recentSection := m.renderRecentSection()
-		sections = append(sections, recentSection)
+	// Recent sessions section — only if visible
+	if m.showRecent {
+		sections = append(sections, m.renderRecentSection())
 	}
 
-	// Options section
-	optionsSection := m.renderOptionsSection()
-	sections = append(sections, optionsSection)
+	// Options section — only if visible
+	if m.showOptions {
+		sections = append(sections, m.renderOptionsSection())
+	}
 
 	// Status bar (or kill confirmation)
 	if m.confirmKill {
@@ -620,13 +736,13 @@ func (m landingModel) View() string {
 			Align(lipgloss.Center).
 			Padding(1, 0)
 		sections = append(sections, confirmStyle.Render(
-			fmt.Sprintf("Kill session '%s'? (y/n)", m.killSessionName)))
+			fmt.Sprintf("Kill session '%s'? (Enter/Esc)", m.killSessionName)))
 	} else {
-		statusBar := m.renderStatusBar()
-		sections = append(sections, statusBar)
+		sections = append(sections, m.renderStatusBar())
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+	result := lipgloss.JoinVertical(lipgloss.Left, sections...)
+	return truncateToHeight(result, m.height)
 }
 
 // calculateClickZones updates the click zones based on current layout
@@ -662,8 +778,8 @@ func (m *landingModel) calculateClickZones() {
 	}
 	currentY += 3 + sessionItems + 1 // header area + items + bottom border
 
-	// Recent sessions section (if entries exist): border(1) + header(1) + divider(1) + items + footer? + border(1)
-	if len(m.recentSessions) > 0 {
+	// Recent sessions section (only if visible)
+	if m.showRecent {
 		visibleRecent := m.visibleRecentCount()
 		recentListStart := currentY + 3 // border + header + divider
 		for i := 0; i < visibleRecent; i++ {
@@ -689,15 +805,17 @@ func (m *landingModel) calculateClickZones() {
 		}
 	}
 
-	// Options section: border(1) + header(1) + divider(1) + description(1) + 3 options + border(1)
-	optionListStart := currentY + 4 // border + header + divider + description
-	for i := 0; i < 3; i++ {
-		m.clickZones = append(m.clickZones, clickZone{
-			y1:      optionListStart + i,
-			y2:      optionListStart + i + 1,
-			section: sectionOptions,
-			index:   i,
-		})
+	// Options section (only if visible)
+	if m.showOptions {
+		optionListStart := currentY + 4 // border + header + divider + description
+		for i := 0; i < 3; i++ {
+			m.clickZones = append(m.clickZones, clickZone{
+				y1:      optionListStart + i,
+				y2:      optionListStart + i + 1,
+				section: sectionOptions,
+				index:   i,
+			})
+		}
 	}
 }
 
@@ -786,9 +904,17 @@ func (m landingModel) renderSessionsSection() string {
 			}
 
 			formattedLine := formatSessionLine(session.Line, lineStyle)
-			numberStyle := lipgloss.NewStyle().Foreground(dimColor)
+
+			// Color session number by staleness
+			var numColor lipgloss.Color
+			if m.stalenessDisabled {
+				numColor = dimColor
+			} else {
+				numColor = stalenessColor(m.landingSessionTier(session.Activity))
+			}
+			numberStyle := lipgloss.NewStyle().Foreground(numColor)
 			if m.focusedSection == sectionSessions && i == m.selectedIndex {
-				numberStyle = numberStyle.Bold(true).Inherit(selectedStyle)
+				numberStyle = numberStyle.Bold(true)
 			}
 			row := prefix + numberStyle.Render(number) + " " + formattedLine
 			if m.focusedSection == sectionSessions && i == m.selectedIndex {
@@ -841,7 +967,13 @@ func (m landingModel) renderRecentSection() string {
 			// Format: session name (time ago) directory
 			formattedName := formatSessionName(entry.Name, nameStyle)
 			ago := landingTimeAgo(entry.LastUsedAt)
-			meta := lipgloss.NewStyle().Foreground(dimColor).Render(" (" + ago + ")")
+			var metaColor lipgloss.Color
+			if m.stalenessDisabled {
+				metaColor = dimColor
+			} else {
+				metaColor = stalenessColor(m.landingHistoryTier(entry.LastUsedAt))
+			}
+			meta := lipgloss.NewStyle().Foreground(metaColor).Render(" (" + ago + ")")
 			dir := lipgloss.NewStyle().Foreground(dimColor).Render("  " + entry.WorkingDirectory)
 
 			rows = append(rows, prefixStyle.Render(prefix)+formattedName+meta+dir)

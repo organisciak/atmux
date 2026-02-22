@@ -12,14 +12,25 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/porganisciak/agent-tmux/config"
 	"github.com/porganisciak/agent-tmux/history"
 	"github.com/porganisciak/agent-tmux/tmux"
 )
 
+// stalenessTier classifies session freshness.
+type stalenessTier int
+
+const (
+	tierFresh        stalenessTier = iota
+	tierGettingStale               // between fresh and stale thresholds
+	tierStale                      // beyond stale threshold
+)
+
 type SessionsOptions struct {
-	AltScreen bool
-	Executors []tmux.TmuxExecutor // Executors for local + remote hosts
-	ShowBeads bool                // Show beads issue counts per session
+	AltScreen        bool
+	Executors        []tmux.TmuxExecutor // Executors for local + remote hosts
+	ShowBeads        bool                // Show beads issue counts per session
+	DisableStaleness bool                // Disable staleness indicators
 }
 
 // SessionsResult contains the outcome of the sessions list interaction.
@@ -37,7 +48,7 @@ func RunSessionsList(opts SessionsOptions) (*SessionsResult, error) {
 	if len(executors) == 0 {
 		executors = []tmux.TmuxExecutor{tmux.NewLocalExecutor()}
 	}
-	m := newSessionsModel(executors, opts.ShowBeads)
+	m := newSessionsModel(executors, opts.ShowBeads, opts.DisableStaleness)
 	programOptions := []tea.ProgramOption{
 		tea.WithMouseCellMotion(),
 	}
@@ -91,18 +102,49 @@ type sessionsModel struct {
 	confirmKill        bool
 	killSessionName    string
 	lineJump           lineJumpState
+
+	// Staleness
+	stalenessDisabled    bool
+	freshThreshold       time.Duration
+	staleThreshold       time.Duration
+	suggestionThreshold  int
+	confirmKillStale     bool
+	staleSessionNames    []string
 }
 
-func newSessionsModel(executors []tmux.TmuxExecutor, showBeads bool) sessionsModel {
+func newSessionsModel(executors []tmux.TmuxExecutor, showBeads bool, disableStaleness bool) sessionsModel {
 	executorMap := make(map[string]tmux.TmuxExecutor, len(executors))
 	for _, exec := range executors {
 		executorMap[exec.HostLabel()] = exec
 	}
+
+	// Load staleness config
+	var stalenessDisabled bool
+	var freshThreshold, staleThreshold time.Duration
+	var suggestionThreshold int
+
+	settings, err := config.LoadSettings()
+	if err == nil && settings.Staleness != nil {
+		stalenessDisabled = settings.Staleness.Disabled
+		freshThreshold, staleThreshold = settings.Staleness.ParsedStalenessThresholds()
+		suggestionThreshold = settings.Staleness.EffectiveSuggestionThreshold()
+	} else {
+		freshThreshold, staleThreshold = (&config.StalenessConfig{}).ParsedStalenessThresholds()
+		suggestionThreshold = (&config.StalenessConfig{}).EffectiveSuggestionThreshold()
+	}
+	if disableStaleness {
+		stalenessDisabled = true
+	}
+
 	return sessionsModel{
-		selectedIndex: 0,
-		executors:     executors,
-		executorMap:   executorMap,
-		showBeads:     showBeads,
+		selectedIndex:       0,
+		executors:           executors,
+		executorMap:         executorMap,
+		showBeads:           showBeads,
+		stalenessDisabled:   stalenessDisabled,
+		freshThreshold:      freshThreshold,
+		staleThreshold:      staleThreshold,
+		suggestionThreshold: suggestionThreshold,
 	}
 }
 
@@ -200,14 +242,32 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.confirmKill {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			switch keyMsg.String() {
-			case "y", "Y":
+			case "enter":
 				m.confirmKill = false
 				return m, m.killSession(m.killSessionName)
-			case "n", "N", "esc":
+			case "esc", "n", "N":
 				m.confirmKill = false
 				return m, nil
 			}
 			return m, nil // Ignore other keys while confirmation is shown
+		}
+	}
+
+	// Handle kill-stale confirmation if active
+	if m.confirmKillStale {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "enter":
+				m.confirmKillStale = false
+				names := m.staleSessionNames
+				m.staleSessionNames = nil
+				return m, m.killMultipleSessions(names)
+			case "esc", "n", "N":
+				m.confirmKillStale = false
+				m.staleSessionNames = nil
+				return m, nil
+			}
+			return m, nil
 		}
 	}
 
@@ -273,6 +333,23 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return historyLoadedMsg{entries: entries, err: err}
 			},
 		)
+	case killMultipleSessionsMsg:
+		if msg.err != nil {
+			m.lastError = msg.err
+			return m, nil
+		}
+		return m, tea.Batch(
+			m.fetchAllSessions(),
+			func() tea.Msg {
+				store, err := history.Open()
+				if err != nil {
+					return historyLoadedMsg{err: err}
+				}
+				defer store.Close()
+				entries, err := store.LoadHistory()
+				return historyLoadedMsg{entries: entries, err: err}
+			},
+		)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -298,6 +375,15 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			return m.selectCurrent()
+		case "S":
+			if !m.stalenessDisabled {
+				stale := m.staleSessions()
+				if len(stale) > 0 {
+					m.confirmKillStale = true
+					m.staleSessionNames = stale
+				}
+			}
+			return m, nil
 		case "x", "delete", "backspace":
 			if m.selectedIndex < len(m.lines) {
 				// Active session: prompt to kill
@@ -401,7 +487,12 @@ func (m sessionsModel) View() string {
 	if m.selectedIndex < len(m.lines) {
 		xHint = "x kill"
 	}
-	subtitle := lipgloss.NewStyle().Foreground(dimColor).Render("↑↓ select, digits jump, Enter attach, " + xHint + ", q quit")
+	subtitleParts := "↑↓ select, digits jump, Enter attach, " + xHint
+	if !m.stalenessDisabled {
+		subtitleParts += ", S kill-stale"
+	}
+	subtitleParts += ", q quit"
+	subtitle := lipgloss.NewStyle().Foreground(dimColor).Render(subtitleParts)
 	numberWidth := len(fmt.Sprintf("%d", max(1, len(m.lines))))
 
 	var sections []string
@@ -412,7 +503,7 @@ func (m sessionsModel) View() string {
 		warning := lipgloss.NewStyle().
 			Foreground(errorColor).
 			Bold(true).
-			Render(fmt.Sprintf("Kill session '%s'? (y/n)", m.killSessionName))
+			Render(fmt.Sprintf("Kill session '%s'? (Enter/Esc)", m.killSessionName))
 		// Check if this is the currently attached session
 		for _, line := range m.lines {
 			if line.Name == m.killSessionName && strings.Contains(line.Line, "(attached)") {
@@ -426,7 +517,31 @@ func (m sessionsModel) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, sections...)
 	}
 
+	// Show kill-stale confirmation if active
+	if m.confirmKillStale {
+		sections = append(sections, title, subtitle, "")
+		header := lipgloss.NewStyle().
+			Foreground(errorColor).
+			Bold(true).
+			Render(fmt.Sprintf("Kill %d stale session(s)? (Enter/Esc)", len(m.staleSessionNames)))
+		sections = append(sections, header)
+		for _, name := range m.staleSessionNames {
+			sections = append(sections, lipgloss.NewStyle().Foreground(errorColor).Render("  - "+name))
+		}
+		return lipgloss.JoinVertical(lipgloss.Left, sections...)
+	}
+
 	sections = append(sections, title, subtitle, "")
+
+	// Suggestion banner when many sessions and some are stale
+	if !m.stalenessDisabled && len(m.lines) >= m.suggestionThreshold {
+		staleCount := m.staleSessionCount()
+		if staleCount > 0 {
+			banner := lipgloss.NewStyle().Foreground(gettingStaleColor).Render(
+				fmt.Sprintf("%d stale session(s) — press S to kill stale", staleCount))
+			sections = append(sections, banner, "")
+		}
+	}
 
 	// Error display
 	if m.lastError != nil {
@@ -506,7 +621,15 @@ func (m sessionsModel) View() string {
 		for i, entry := range m.historyEntries {
 			globalIdx := len(m.lines) + i
 			ago := sessionsTimeAgo(entry.LastUsedAt)
-			meta := lipgloss.NewStyle().Foreground(dimColor).Render("(" + ago + ")")
+
+			// Color the time-ago text by staleness
+			var metaColor lipgloss.Color
+			if m.stalenessDisabled {
+				metaColor = dimColor
+			} else {
+				metaColor = stalenessColor(m.historyStalenessTier(entry.LastUsedAt))
+			}
+			meta := lipgloss.NewStyle().Foreground(metaColor).Render("(" + ago + ")")
 			dir := lipgloss.NewStyle().Foreground(dimColor).Render(entry.WorkingDirectory)
 			var row string
 			if globalIdx == m.selectedIndex {
@@ -523,7 +646,8 @@ func (m sessionsModel) View() string {
 	// Add tip at the bottom
 	sections = append(sections, "", RenderTipForContext(TipSessions))
 
-	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+	result := lipgloss.JoinVertical(lipgloss.Left, sections...)
+	return truncateToHeight(result, m.height)
 }
 
 func sessionsTimeAgo(t time.Time) string {
@@ -585,6 +709,96 @@ func removeHistoryEntry(entries []history.Entry, id int64) []history.Entry {
 		}
 	}
 	return entries
+}
+
+// classifyStalenessTier returns the staleness tier for a given age.
+func classifyStalenessTier(age time.Duration, freshThreshold, staleThreshold time.Duration) stalenessTier {
+	if age <= freshThreshold {
+		return tierFresh
+	}
+	if age <= staleThreshold {
+		return tierGettingStale
+	}
+	return tierStale
+}
+
+// sessionStalenessTier classifies a session's staleness based on its activity timestamp.
+func (m sessionsModel) sessionStalenessTier(activity int64) stalenessTier {
+	if m.stalenessDisabled || activity == 0 {
+		return tierFresh
+	}
+	return classifyStalenessTier(time.Since(time.Unix(activity, 0)), m.freshThreshold, m.staleThreshold)
+}
+
+// historyStalenessTier classifies a history entry's staleness based on its last-used time.
+func (m sessionsModel) historyStalenessTier(lastUsed time.Time) stalenessTier {
+	if m.stalenessDisabled || lastUsed.IsZero() {
+		return tierFresh
+	}
+	return classifyStalenessTier(time.Since(lastUsed), m.freshThreshold, m.staleThreshold)
+}
+
+// stalenessColor returns the color for a given staleness tier.
+func stalenessColor(tier stalenessTier) lipgloss.Color {
+	switch tier {
+	case tierGettingStale:
+		return gettingStaleColor
+	case tierStale:
+		return staleColor
+	default:
+		return freshColor
+	}
+}
+
+// staleSessions returns the names of active sessions classified as stale.
+func (m sessionsModel) staleSessions() []string {
+	var names []string
+	for _, line := range m.lines {
+		if m.sessionStalenessTier(line.Activity) == tierStale {
+			names = append(names, line.Name)
+		}
+	}
+	return names
+}
+
+// staleSessionCount returns the number of stale active sessions.
+func (m sessionsModel) staleSessionCount() int {
+	count := 0
+	for _, line := range m.lines {
+		if m.sessionStalenessTier(line.Activity) == tierStale {
+			count++
+		}
+	}
+	return count
+}
+
+// truncateToHeight trims rendered output to at most maxHeight lines,
+// ensuring the top (most important) content is always visible.
+func truncateToHeight(s string, maxHeight int) string {
+	if maxHeight <= 0 {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) <= maxHeight {
+		return s
+	}
+	return strings.Join(lines[:maxHeight], "\n")
+}
+
+type killMultipleSessionsMsg struct {
+	killed []string
+	err    error
+}
+
+func (m sessionsModel) killMultipleSessions(names []string) tea.Cmd {
+	return func() tea.Msg {
+		for _, name := range names {
+			if err := tmux.KillSession(name); err != nil {
+				return killMultipleSessionsMsg{killed: names, err: err}
+			}
+		}
+		return killMultipleSessionsMsg{killed: names}
+	}
 }
 
 func (m sessionsModel) memorySummary(sessionName string) string {
@@ -663,9 +877,18 @@ func (m sessionsModel) renderActiveSessionRow(index int, line tmux.SessionLine, 
 	memSummary := m.memorySummary(line.Name)
 	bdLabel := m.beadsLabel(line.Name)
 
+	// Determine number color based on staleness
+	tier := m.sessionStalenessTier(line.Activity)
+	var numberColor lipgloss.Color
+	if m.stalenessDisabled {
+		numberColor = dimColor
+	} else {
+		numberColor = stalenessColor(tier)
+	}
+
 	if index == m.selectedIndex {
 		row := selectedStyle.Render("> ") +
-			selectedStyle.Render(number) +
+			lipgloss.NewStyle().Foreground(numberColor).Bold(true).Render(number) +
 			" " +
 			formatSessionLine(line.Line, selectedStyle)
 		if bdLabel != "" {
@@ -678,7 +901,7 @@ func (m sessionsModel) renderActiveSessionRow(index int, line tmux.SessionLine, 
 	}
 
 	row := "  " +
-		lipgloss.NewStyle().Foreground(dimColor).Render(number) +
+		lipgloss.NewStyle().Foreground(numberColor).Render(number) +
 		" " +
 		formatSessionLine(line.Line, lipgloss.NewStyle())
 	if bdLabel != "" {

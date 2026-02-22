@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // AttachStrategy controls how remote sessions are attached when inside tmux.
@@ -32,6 +33,48 @@ const (
 	legacySettingsDirName = "agent-tmux"
 )
 
+// StalenessConfig controls session staleness indicators in the sessions TUI.
+type StalenessConfig struct {
+	FreshDuration       string `json:"fresh_duration,omitempty"`       // default "24h"
+	StaleDuration       string `json:"stale_duration,omitempty"`       // default "48h"
+	SuggestionThreshold int    `json:"suggestion_threshold,omitempty"` // default 7
+	Disabled            bool   `json:"disabled,omitempty"`
+}
+
+const (
+	defaultFreshDuration       = 24 * time.Hour
+	defaultStaleDuration       = 48 * time.Hour
+	defaultSuggestionThreshold = 7
+)
+
+// ParsedStalenessThresholds returns the fresh and stale durations, falling back to defaults.
+func (c *StalenessConfig) ParsedStalenessThresholds() (fresh, stale time.Duration) {
+	fresh = defaultFreshDuration
+	stale = defaultStaleDuration
+	if c == nil {
+		return
+	}
+	if c.FreshDuration != "" {
+		if d, err := time.ParseDuration(c.FreshDuration); err == nil {
+			fresh = d
+		}
+	}
+	if c.StaleDuration != "" {
+		if d, err := time.ParseDuration(c.StaleDuration); err == nil {
+			stale = d
+		}
+	}
+	return
+}
+
+// EffectiveSuggestionThreshold returns the suggestion threshold, falling back to the default.
+func (c *StalenessConfig) EffectiveSuggestionThreshold() int {
+	if c == nil || c.SuggestionThreshold <= 0 {
+		return defaultSuggestionThreshold
+	}
+	return c.SuggestionThreshold
+}
+
 // Settings stores user preferences for atmux (agent-tmux)
 type Settings struct {
 	// DefaultAction controls what happens when running `atmux` with no subcommand
@@ -41,6 +84,9 @@ type Settings struct {
 	// RemoteAttachStrategy controls how remote sessions are attached when inside tmux.
 	// Values: "auto" (default), "replace", "new-window"
 	RemoteAttachStrategy AttachStrategy `json:"remote_attach_strategy,omitempty"`
+
+	// Staleness controls session staleness indicators in the sessions TUI.
+	Staleness *StalenessConfig `json:"staleness,omitempty"`
 }
 
 // DefaultSettings returns settings with default values
