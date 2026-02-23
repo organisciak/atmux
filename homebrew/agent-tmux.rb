@@ -4,8 +4,8 @@
 class AgentTmux < Formula
   desc "Alias for atmux (agent-tmux)"
   homepage "https://github.com/organisciak/atmux"
-  url "https://github.com/organisciak/atmux/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "REPLACE_WITH_ACTUAL_SHA256"
+  url "https://github.com/organisciak/atmux/archive/refs/tags/v0.2.0.tar.gz"
+  sha256 "1daef7cfa2d46fbdbcdabe3322ba8ac43ca0b3dcd2b13df7240de27c10e77f7d"
   license "MIT"
   head "https://github.com/organisciak/atmux.git", branch: "main"
 

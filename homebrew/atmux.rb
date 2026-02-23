@@ -4,8 +4,8 @@
 class Atmux < Formula
   desc "atmux (agent-tmux): manage tmux sessions for AI coding agents"
   homepage "https://github.com/organisciak/atmux"
-  url "https://github.com/organisciak/atmux/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "65c7e184d4cda7d0bfc353a1608f347dae3aee02f3a8b4557826d6b28d74c16c"
+  url "https://github.com/organisciak/atmux/archive/refs/tags/v0.2.0.tar.gz"
+  sha256 "1daef7cfa2d46fbdbcdabe3322ba8ac43ca0b3dcd2b13df7240de27c10e77f7d"
   license "MIT"
   head "https://github.com/organisciak/atmux.git", branch: "main"
 
