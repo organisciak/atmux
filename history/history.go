@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	schemaVersion = 2
+	schemaVersion = 3
 	maxHistory    = 100 // Maximum entries before LRU eviction
 )
 
@@ -114,52 +114,51 @@ func (s *Store) migrate() error {
 		return err
 	}
 
-	if version < 1 {
-		// Initial schema
-		_, err := s.db.Exec(`
-			CREATE TABLE IF NOT EXISTS agent_history (
-				id INTEGER PRIMARY KEY,
-				name TEXT NOT NULL,
-				working_directory TEXT NOT NULL,
-				session_name TEXT NOT NULL,
-				host TEXT NOT NULL DEFAULT '',
-				attach_method TEXT NOT NULL DEFAULT 'ssh',
-				created_at INTEGER NOT NULL,
-				last_used_at INTEGER NOT NULL
-			);
-
-			CREATE UNIQUE INDEX IF NOT EXISTS agent_history_unique
-				ON agent_history (session_name, working_directory, host);
-
-			CREATE INDEX IF NOT EXISTS agent_history_last_used
-				ON agent_history (last_used_at DESC);
-
-			CREATE INDEX IF NOT EXISTS agent_history_name
-				ON agent_history (name);
-
-			PRAGMA user_version = 2;
-		`)
-		if err != nil {
-			return err
-		}
+	// Create table if it doesn't exist (fresh installs get full latest schema).
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_history (
+			id INTEGER PRIMARY KEY,
+			name TEXT NOT NULL,
+			working_directory TEXT NOT NULL,
+			session_name TEXT NOT NULL,
+			host TEXT NOT NULL DEFAULT '',
+			attach_method TEXT NOT NULL DEFAULT 'ssh',
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL
+		);
+	`)
+	if err != nil {
+		return err
 	}
 
-	if version == 1 {
-		// Migration from v1 to v2: add host and attach_method columns,
-		// update unique index to include host.
-		_, err := s.db.Exec(`
-			ALTER TABLE agent_history ADD COLUMN host TEXT NOT NULL DEFAULT '';
-			ALTER TABLE agent_history ADD COLUMN attach_method TEXT NOT NULL DEFAULT 'ssh';
+	// v0/v1 -> v2: add host column and update unique index.
+	if version < 2 {
+		// Ignore duplicate column errors when older databases are partially migrated.
+		s.db.Exec(`ALTER TABLE agent_history ADD COLUMN host TEXT NOT NULL DEFAULT ''`)
+	}
 
-			DROP INDEX IF EXISTS agent_history_unique;
-			CREATE UNIQUE INDEX agent_history_unique
-				ON agent_history (session_name, working_directory, host);
+	// v2 -> v3: add attach_method column.
+	if version < 3 {
+		// Ignore duplicate column errors when this column already exists.
+		s.db.Exec(`ALTER TABLE agent_history ADD COLUMN attach_method TEXT NOT NULL DEFAULT 'ssh'`)
+	}
 
-			PRAGMA user_version = 2;
-		`)
-		if err != nil {
-			return err
-		}
+	// Ensure indexes are correct and set schema version.
+	_, err = s.db.Exec(`
+		DROP INDEX IF EXISTS agent_history_unique;
+		CREATE UNIQUE INDEX IF NOT EXISTS agent_history_unique
+			ON agent_history (session_name, working_directory, host);
+
+		CREATE INDEX IF NOT EXISTS agent_history_last_used
+			ON agent_history (last_used_at DESC);
+
+		CREATE INDEX IF NOT EXISTS agent_history_name
+			ON agent_history (name);
+
+		PRAGMA user_version = 3;
+	`)
+	if err != nil {
+		return err
 	}
 
 	return nil

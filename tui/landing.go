@@ -158,7 +158,7 @@ func (m landingModel) Init() tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg {
 			lines, err := tmux.ListSessionsRaw()
-			return sessionsLoadedMsg{lines: lines, err: err}
+			return executorSessionsMsg{lines: lines, err: err}
 		},
 		func() tea.Msg {
 			store, err := history.Open()
@@ -195,7 +195,7 @@ func (m landingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case sessionsLoadedMsg:
+	case executorSessionsMsg:
 		m.sessions = msg.lines
 		m.lastError = msg.err
 		m.filterRecentSessions()
@@ -221,7 +221,7 @@ func (m landingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Refresh sessions list after killing
 		return m, func() tea.Msg {
 			lines, err := tmux.ListSessionsRaw()
-			return sessionsLoadedMsg{lines: lines, err: err}
+			return executorSessionsMsg{lines: lines, err: err}
 		}
 
 	case landingHistoryDeletedMsg:

@@ -119,6 +119,30 @@ func TestInteractiveRouting_MoshMethod(t *testing.T) {
 	}
 }
 
+func TestShellQuote(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"simple", "'simple'"},
+		{"with space", "'with space'"},
+		{"it's", "'it'\\''s'"},
+		{"#{session_name}: #{session_windows} windows", "'#{session_name}: #{session_windows} windows'"},
+	}
+	for _, tt := range tests {
+		if got := shellQuote(tt.input); got != tt.want {
+			t.Errorf("shellQuote(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestRemoteCommand(t *testing.T) {
+	got := remoteCommand("tmux", []string{"list-sessions", "-F", "#{session_name}: #{session_windows} windows"})
+	want := "tmux 'list-sessions' '-F' '#{session_name}: #{session_windows} windows'"
+	if got != want {
+		t.Errorf("remoteCommand mismatch\n got: %s\nwant: %s", got, want)
+	}
+}
+
 func TestHostLabel(t *testing.T) {
 	e := NewRemoteExecutor("user@host", 22, "ssh", "my-alias")
 	if got := e.HostLabel(); got != "my-alias" {

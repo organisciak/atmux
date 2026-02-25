@@ -99,6 +99,8 @@ type sessionsModel struct {
 	memoryError        error
 	executors          []tmux.TmuxExecutor
 	executorMap        map[string]tmux.TmuxExecutor
+	rawHistoryEntries  []history.Entry   // Unfiltered history (for re-filtering)
+	pendingExecutors   int               // Executors still loading
 	confirmKill        bool
 	killSessionName    string
 	lineJump           lineJumpState
@@ -141,6 +143,7 @@ func newSessionsModel(executors []tmux.TmuxExecutor, showBeads bool, disableStal
 		executors:           executors,
 		executorMap:         executorMap,
 		showBeads:           showBeads,
+		pendingExecutors:    len(executors),
 		stalenessDisabled:   stalenessDisabled,
 		freshThreshold:      freshThreshold,
 		staleThreshold:      staleThreshold,
@@ -168,26 +171,48 @@ func (m sessionsModel) Init() tea.Cmd {
 	)
 }
 
-// fetchAllSessions fetches sessions from all executors.
+// fetchAllSessions launches one async command per executor so that local
+// sessions appear immediately and remote hosts pop in when ready.
 func (m sessionsModel) fetchAllSessions() tea.Cmd {
-	return func() tea.Msg {
-		var allLines []tmux.SessionLine
-		for _, exec := range m.executors {
-			lines, err := tmux.ListSessionsRawWithExecutor(exec)
-			if err != nil {
-				continue // Skip unreachable hosts
-			}
-			allLines = append(allLines, lines...)
-		}
-		// Sort merged results by most recently active first
-		sort.SliceStable(allLines, func(i, j int) bool {
-			return allLines[i].Activity > allLines[j].Activity
+	var cmds []tea.Cmd
+	for _, exec := range m.executors {
+		executor := exec // capture for closure
+		cmds = append(cmds, func() tea.Msg {
+			lines, err := tmux.ListSessionsRawWithExecutor(executor)
+			return executorSessionsMsg{lines: lines, err: err}
 		})
-		return sessionsLoadedMsg{lines: allLines, err: nil}
 	}
+	return tea.Batch(cmds...)
 }
 
-type sessionsLoadedMsg struct {
+// groupSessionsByHost reorders sessions so local sessions come first, then
+// each remote host group, preserving activity order within each group.
+// This keeps m.lines indices consistent with the display order when the
+// View groups by host.
+func groupSessionsByHost(lines []tmux.SessionLine) []tmux.SessionLine {
+	var local []tmux.SessionLine
+	remoteGroups := make(map[string][]tmux.SessionLine)
+	var remoteOrder []string
+	for _, line := range lines {
+		if line.Host == "" {
+			local = append(local, line)
+		} else {
+			if _, seen := remoteGroups[line.Host]; !seen {
+				remoteOrder = append(remoteOrder, line.Host)
+			}
+			remoteGroups[line.Host] = append(remoteGroups[line.Host], line)
+		}
+	}
+	result := make([]tmux.SessionLine, 0, len(lines))
+	result = append(result, local...)
+	for _, host := range remoteOrder {
+		result = append(result, remoteGroups[host]...)
+	}
+	return result
+}
+
+// executorSessionsMsg is sent when a single executor finishes loading sessions.
+type executorSessionsMsg struct {
 	lines []tmux.SessionLine
 	err   error
 }
@@ -272,16 +297,31 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case sessionsLoadedMsg:
-		m.lines = msg.lines
-		m.lastError = msg.err
-		m.clampSelection()
-		if m.showBeads {
-			var cmds []tea.Cmd
-			for _, line := range m.lines {
-				cmds = append(cmds, fetchBeadsCount(line.Name))
+	case executorSessionsMsg:
+		m.pendingExecutors--
+		if msg.err == nil && len(msg.lines) > 0 {
+			m.lines = append(m.lines, msg.lines...)
+			sort.SliceStable(m.lines, func(i, j int) bool {
+				return m.lines[i].Activity > m.lines[j].Activity
+			})
+			m.lines = groupSessionsByHost(m.lines)
+			// Re-filter history against updated session list
+			if m.rawHistoryEntries != nil {
+				m.historyEntries = m.filterHistory(m.rawHistoryEntries)
 			}
-			return m, tea.Batch(cmds...)
+			m.clampSelection()
+			// Trigger beads loading for newly arrived local sessions
+			if m.showBeads {
+				var cmds []tea.Cmd
+				for _, line := range msg.lines {
+					if line.Host == "" {
+						cmds = append(cmds, fetchBeadsCount(line.Name))
+					}
+				}
+				if len(cmds) > 0 {
+					return m, tea.Batch(cmds...)
+				}
+			}
 		}
 		return m, nil
 	case beadsCountMsg:
@@ -302,6 +342,7 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.memoryError = msg.err
 		return m, nil
 	case historyLoadedMsg:
+		m.rawHistoryEntries = msg.entries
 		m.historyEntries = m.filterHistory(msg.entries)
 		m.historyError = msg.err
 		m.clampSelection()
@@ -321,6 +362,8 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Refresh sessions and history after killing
 		m.killSessionName = ""
+		m.lines = nil
+		m.pendingExecutors = len(m.executors)
 		return m, tea.Batch(
 			m.fetchAllSessions(),
 			func() tea.Msg {
@@ -338,6 +381,8 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastError = msg.err
 			return m, nil
 		}
+		m.lines = nil
+		m.pendingExecutors = len(m.executors)
 		return m, tea.Batch(
 			m.fetchAllSessions(),
 			func() tea.Msg {
@@ -400,25 +445,62 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			headerHeight := 2
+			// Build a Y-position → item-index mapping that accounts for
+			// all non-selectable rows (title, subtitle, headers, banners).
+			y := 0
+			y += 3 // title + subtitle + blank line
+
+			// Staleness suggestion banner
+			if !m.stalenessDisabled && len(m.lines) >= m.suggestionThreshold && m.staleSessionCount() > 0 {
+				y += 2 // banner + blank
+			}
+
+			// Error lines
+			if m.lastError != nil {
+				y++
+			}
+			if m.historyError != nil {
+				y++
+			}
+
+			// Active sessions with host group headers
 			total := m.totalItems()
-			// Active sessions area
-			if msg.Y >= headerHeight && msg.Y < headerHeight+len(m.lines) {
-				clicked := msg.Y - headerHeight
-				if clicked >= 0 && clicked < len(m.lines) {
-					m.selectedIndex = clicked
-					return m.selectCurrent()
+			lastHost := "\x00"
+			hasRemote := false
+			for _, line := range m.lines {
+				if line.Host != "" {
+					hasRemote = true
+					break
 				}
 			}
-			// Recent history area (after sessions + header)
-			recentHeaderY := headerHeight + len(m.lines) + 2 // +2 for spacing and header
-			if msg.Y >= recentHeaderY && msg.Y < recentHeaderY+len(m.historyEntries) {
-				clicked := msg.Y - recentHeaderY + len(m.lines)
-				if clicked >= len(m.lines) && clicked < total {
-					m.selectedIndex = clicked
+			activeStartY := y
+			for i, line := range m.lines {
+				if hasRemote && line.Host != lastHost {
+					y++ // host group header row
+					lastHost = line.Host
+				} else if !hasRemote && i == 0 {
+					y++ // "Active" header
+				}
+				if msg.Y == y {
+					m.selectedIndex = i
 					return m.selectCurrent()
 				}
+				y++
 			}
+
+			// Recent history area: blank line + "Recent" header
+			if len(m.historyEntries) > 0 {
+				y += 2 // spacing + "Recent" header
+				for i := range m.historyEntries {
+					globalIdx := len(m.lines) + i
+					if msg.Y == y && globalIdx < total {
+						m.selectedIndex = globalIdx
+						return m.selectCurrent()
+					}
+					y++
+				}
+			}
+			_ = activeStartY
 		}
 	}
 	return m, nil
@@ -553,65 +635,44 @@ func (m sessionsModel) View() string {
 		sections = append(sections, err)
 	}
 
-	// Active sessions section - group by host if remotes exist
+	// Active sessions section — iterate m.lines in order (already grouped
+	// by host via groupSessionsByHost) and insert a header when the host changes.
 	sectionHeader := lipgloss.NewStyle().Bold(true).Foreground(secondaryColor)
 
-	hasRemote := false
-	for _, line := range m.lines {
-		if line.Host != "" {
-			hasRemote = true
-			break
-		}
-	}
-
 	if len(m.lines) > 0 {
-		if hasRemote {
-			// Group by host
-			type hostGroup struct {
-				host  string
-				lines []tmux.SessionLine
-				start int // global index start
+		lastHost := "\x00" // sentinel so the first line always triggers a header
+		hasRemote := false
+		for _, line := range m.lines {
+			if line.Host != "" {
+				hasRemote = true
+				break
 			}
-			var groups []hostGroup
-			groupMap := make(map[string]*hostGroup)
-			idx := 0
-			for _, line := range m.lines {
-				h := line.Host
-				if g, ok := groupMap[h]; ok {
-					g.lines = append(g.lines, line)
-				} else {
-					g := &hostGroup{host: h, start: idx}
-					g.lines = append(g.lines, line)
-					groupMap[h] = g
-					groups = append(groups, *g)
-				}
-				idx++
-			}
-			// Render each group
-			// Rebuild groups since we need to recalculate after map mutation
-			currentIdx := 0
-			for _, g := range groups {
+		}
+		for i, line := range m.lines {
+			if hasRemote && line.Host != lastHost {
 				hostLabel := "Active (local)"
-				if g.host != "" {
-					hostLabel = "Active @ " + g.host
+				if line.Host != "" {
+					hostLabel = "Active @ " + line.Host
 				}
 				sections = append(sections, sectionHeader.Render(hostLabel))
-				for _, line := range groupMap[g.host].lines {
-					row := m.renderActiveSessionRow(currentIdx, line, numberWidth)
-					sections = append(sections, row)
-					currentIdx++
-				}
+				lastHost = line.Host
+			} else if !hasRemote && i == 0 {
+				sections = append(sections, sectionHeader.Render("Active"))
 			}
-		} else {
-			sections = append(sections, sectionHeader.Render("Active"))
-			for i, line := range m.lines {
-				row := m.renderActiveSessionRow(i, line, numberWidth)
-				sections = append(sections, row)
-			}
+			row := m.renderActiveSessionRow(i, line, numberWidth)
+			sections = append(sections, row)
 		}
+	} else if m.pendingExecutors > 0 {
+		sections = append(sections, sectionHeader.Render("Active"))
+		sections = append(sections, lipgloss.NewStyle().Foreground(dimColor).Render("  Loading..."))
 	} else {
 		sections = append(sections, sectionHeader.Render("Active"))
 		sections = append(sections, lipgloss.NewStyle().Foreground(dimColor).Render("  No active sessions"))
+	}
+
+	// Show loading indicator for remote hosts still connecting
+	if m.pendingExecutors > 0 && len(m.lines) > 0 {
+		sections = append(sections, lipgloss.NewStyle().Foreground(dimColor).Render("  Loading remote hosts..."))
 	}
 
 	// Recent history section

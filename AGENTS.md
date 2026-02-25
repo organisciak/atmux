@@ -43,8 +43,15 @@ Regularly check if AGENTS.md is up to date, and update if it's not. If you learn
 - There are currently no `_test.go` files; add tests alongside packages as needed.
 - Name test files `*_test.go` and test functions `TestXxx`.
 
+## Task Completion Checklist
+After completing any code change, always run:
+1. `make test` — ensure all tests pass.
+2. `make install` — install the updated binary so the local CLI stays current.
+3. Consider a version bump (`make tag-version VERSION=vX.Y.Z`) when the change is user-facing (new features, bug fixes, behavior changes). Skip for internal refactors, docs-only, or in-progress work.
+4. `make version-status` — shows commits since the last tag; use this to judge whether a bump is warranted.
+
 ## Commit & Pull Request Guidelines
-- Commit history uses short, descriptive sentences (e.g., “Add gitignore and fix Makefile install targets”).
+- Commit history uses short, descriptive sentences (e.g., "Add gitignore and fix Makefile install targets").
 - Prefer small, focused commits that describe the change outcome.
 - PRs should include: a brief summary, key commands run (e.g., `make test`), and notes on behavior changes. Add screenshots only if CLI output formatting changes.
 

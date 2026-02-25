@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -52,19 +53,21 @@ func NewRemoteExecutor(host string, port int, attachMethod, alias string) *Remot
 // ensureControlMaster lazily starts an SSH ControlMaster connection.
 func (e *RemoteExecutor) ensureControlMaster() error {
 	e.controlOnce.Do(func() {
-		// Create a temp directory for the socket
-		dir, err := os.MkdirTemp("", "atmux-ssh-*")
+		// Create a temp directory for the socket under /tmp to keep paths short.
+		// macOS limits Unix socket paths to 104 bytes; the default os.TempDir()
+		// (/var/folders/...) is too long when combined with the %C hash expansion.
+		dir, err := os.MkdirTemp("/tmp", "atmux-*")
 		if err != nil {
 			e.controlErr = fmt.Errorf("failed to create temp dir for SSH socket: %w", err)
 			return
 		}
-		e.controlPath = filepath.Join(dir, "ctrl-%C")
+		e.controlPath = filepath.Join(dir, "s")
 
 		ctx, cancel := context.WithTimeout(context.Background(), defaultSSHTimeout)
 		defer cancel()
 
 		args := []string{
-			"-o", "ControlMaster=auto",
+			"-o", "ControlMaster=yes",
 			"-o", "ControlPath=" + e.controlPath,
 			"-o", "ControlPersist=300", // Keep alive for 5 minutes
 			"-o", "StrictHostKeyChecking=accept-new",
@@ -79,19 +82,31 @@ func (e *RemoteExecutor) ensureControlMaster() error {
 			return
 		}
 
-		// Wait briefly for the control socket to appear, then let it run in background
+		// Wait for the control socket to appear or the process to exit.
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 
-		// Give it a moment to establish
-		select {
-		case err := <-done:
-			// Process exited immediately, which is expected with -N and ControlPersist
-			if err != nil {
-				e.controlErr = fmt.Errorf("SSH ControlMaster to %s failed: %w", e.Host, err)
+		// Poll for the socket file to appear (handles slow connections).
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		deadline := time.After(defaultSSHTimeout)
+
+		for {
+			select {
+			case err := <-done:
+				// Process exited — expected with -N and ControlPersist once forked.
+				if err != nil {
+					e.controlErr = fmt.Errorf("SSH ControlMaster to %s failed: %w", e.Host, err)
+				}
+				return
+			case <-deadline:
+				e.controlErr = fmt.Errorf("SSH ControlMaster to %s timed out waiting for socket", e.Host)
+				return
+			case <-ticker.C:
+				if socketExists(e.controlPath) {
+					return
+				}
 			}
-		case <-time.After(2 * time.Second):
-			// Still running, which is fine — it's in the background
 		}
 	})
 	return e.controlErr
@@ -111,6 +126,24 @@ func (e *RemoteExecutor) sshArgs() []string {
 	return args
 }
 
+// shellQuote wraps s in single quotes for safe passage through a remote shell.
+// Interior single quotes are escaped as '\'' (end-quote, literal quote, re-open).
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// remoteCommand builds a single shell-safe command string for SSH.
+// SSH concatenates all args after the host and passes them to the remote shell,
+// so each argument must be individually quoted to preserve spaces and special chars.
+func remoteCommand(command string, args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, command)
+	for _, a := range args {
+		parts = append(parts, shellQuote(a))
+	}
+	return strings.Join(parts, " ")
+}
+
 func (e *RemoteExecutor) Run(args ...string) error {
 	if err := e.ensureControlMaster(); err != nil {
 		return err
@@ -120,8 +153,7 @@ func (e *RemoteExecutor) Run(args ...string) error {
 	defer cancel()
 
 	sshArgs := e.sshArgs()
-	sshArgs = append(sshArgs, e.Host, "tmux")
-	sshArgs = append(sshArgs, args...)
+	sshArgs = append(sshArgs, e.Host, remoteCommand("tmux", args))
 
 	return exec.CommandContext(ctx, "ssh", sshArgs...).Run()
 }
@@ -135,8 +167,7 @@ func (e *RemoteExecutor) Output(args ...string) ([]byte, error) {
 	defer cancel()
 
 	sshArgs := e.sshArgs()
-	sshArgs = append(sshArgs, e.Host, "tmux")
-	sshArgs = append(sshArgs, args...)
+	sshArgs = append(sshArgs, e.Host, remoteCommand("tmux", args))
 
 	return exec.CommandContext(ctx, "ssh", sshArgs...).Output()
 }
@@ -222,10 +253,18 @@ func (e *RemoteExecutor) RunGeneric(command string, args ...string) ([]byte, err
 	defer cancel()
 
 	sshArgs := e.sshArgs()
-	sshArgs = append(sshArgs, e.Host, command)
-	sshArgs = append(sshArgs, args...)
+	sshArgs = append(sshArgs, e.Host, remoteCommand(command, args))
 
 	return exec.CommandContext(ctx, "ssh", sshArgs...).Output()
+}
+
+// socketExists checks whether a Unix socket file exists at the given path.
+func socketExists(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return fi.Mode().Type()&os.ModeSocket != 0
 }
 
 func (e *RemoteExecutor) HostLabel() string {

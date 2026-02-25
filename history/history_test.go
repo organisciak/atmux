@@ -340,7 +340,7 @@ func TestSaveEntryDefaultAttachMethod(t *testing.T) {
 	}
 }
 
-func TestMigrationV1ToV2(t *testing.T) {
+func TestMigrationV1ToLatest(t *testing.T) {
 	// Create a v1 database manually
 	tmpDir, err := os.MkdirTemp("", "history-migration-test-*")
 	if err != nil {
@@ -388,21 +388,21 @@ func TestMigrationV1ToV2(t *testing.T) {
 	}
 	db.Close()
 
-	// Now open with the Store which should auto-migrate to v2
+	// Now open with the Store which should auto-migrate to latest schema
 	store, err := openPath(dbPath)
 	if err != nil {
 		t.Fatalf("failed to open store (migration): %v", err)
 	}
 	defer store.Close()
 
-	// Check that migration happened: user_version should be 2
+	// Check that migration happened: user_version should be latest.
 	var version int
 	err = store.db.QueryRow("PRAGMA user_version").Scan(&version)
 	if err != nil {
 		t.Fatalf("failed to read user_version: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("expected schema version 2 after migration, got %d", version)
+	if version != schemaVersion {
+		t.Errorf("expected schema version %d after migration, got %d", schemaVersion, version)
 	}
 
 	// Load the old entry — host should be empty, attach_method should be 'ssh'
@@ -435,6 +435,80 @@ func TestMigrationV1ToV2(t *testing.T) {
 	}
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+}
+
+func TestMigrationV2ToV3AddsAttachMethod(t *testing.T) {
+	// Create a v2-like database manually (has host, lacks attach_method).
+	tmpDir, err := os.MkdirTemp("", "history-migration-v2-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test-history.sqlite3")
+	db, err := sql.Open("sqlite3", dbPath+"?_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE agent_history (
+			id INTEGER PRIMARY KEY,
+			name TEXT NOT NULL,
+			working_directory TEXT NOT NULL,
+			session_name TEXT NOT NULL,
+			host TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL
+		);
+		CREATE UNIQUE INDEX agent_history_unique
+			ON agent_history (session_name, working_directory, host);
+		CREATE INDEX agent_history_last_used
+			ON agent_history (last_used_at DESC);
+		CREATE INDEX agent_history_name
+			ON agent_history (name);
+		PRAGMA user_version = 2;
+	`)
+	if err != nil {
+		db.Close()
+		t.Fatalf("failed to create v2 schema: %v", err)
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO agent_history (name, working_directory, session_name, host, created_at, last_used_at)
+		VALUES ('old-project', '/home/user/old', 'atmux-old', '', 1000, 2000)
+	`)
+	if err != nil {
+		db.Close()
+		t.Fatalf("failed to insert v2 entry: %v", err)
+	}
+	db.Close()
+
+	store, err := openPath(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open store (migration): %v", err)
+	}
+	defer store.Close()
+
+	var version int
+	err = store.db.QueryRow("PRAGMA user_version").Scan(&version)
+	if err != nil {
+		t.Fatalf("failed to read user_version: %v", err)
+	}
+	if version != schemaVersion {
+		t.Errorf("expected schema version %d after migration, got %d", schemaVersion, version)
+	}
+
+	entries, err := store.LoadHistory()
+	if err != nil {
+		t.Fatalf("LoadHistory failed after migration: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry after migration, got %d", len(entries))
+	}
+	if entries[0].AttachMethod != "ssh" {
+		t.Errorf("expected default attach_method 'ssh' for migrated entry, got %q", entries[0].AttachMethod)
 	}
 }
 

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -64,7 +65,11 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	// Force popup with -p, or default to popup when inside tmux (unless --no-popup)
 	insideTmux := os.Getenv("TMUX") != ""
 	if sessionsPopup || (insideTmux && !sessionsNoPopup && !sessionsInline) {
-		return launchAsPopup("sessions")
+		if err := launchAsPopup("sessions"); err != nil {
+			return err
+		}
+		// After popup closes, check if the inner process selected a session
+		return switchToPopupTarget()
 	}
 
 	result, err := tui.RunSessionsList(tui.SessionsOptions{
@@ -78,6 +83,13 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	}
 	if result.SessionName == "" {
 		return nil
+	}
+
+	// If running inside a popup, communicate the target session back to the
+	// parent process via a tmux global option instead of switching directly.
+	// The parent reads this after the popup closes and performs the real switch.
+	if tmuxClientIsPopup() {
+		return handlePopupSelection(result)
 	}
 
 	if result.IsFromHistory {
@@ -165,6 +177,54 @@ func runSessionsNonInteractive(cmd *cobra.Command, executors []tmux.TmuxExecutor
 		}
 	}
 	return nil
+}
+
+// switchToPopupTarget reads the session target written by the inner popup
+// process and performs the actual switch-client from the parent context.
+func switchToPopupTarget() error {
+	out, err := exec.Command("tmux", "show-option", "-gv", "@atmux-popup-target").Output()
+	// Always clean up the option
+	exec.Command("tmux", "set-option", "-gu", "@atmux-popup-target").Run()
+	if err != nil {
+		return nil // No selection made
+	}
+	target := strings.TrimSpace(string(out))
+	if target == "" {
+		return nil
+	}
+	return exec.Command("tmux", "switch-client", "-t", target).Run()
+}
+
+// handlePopupSelection handles session selection when running inside a tmux
+// popup. Instead of attaching directly (which would target the popup client),
+// it writes the target session to a tmux global option for the parent process
+// to pick up after the popup closes.
+func handlePopupSelection(result *tui.SessionsResult) error {
+	target := result.SessionName
+
+	if result.IsFromHistory {
+		// Create the session if needed (creation works fine inside a popup)
+		session := tmux.NewSession(result.WorkingDir)
+		if !session.Exists() {
+			localConfigPath := filepath.Join(result.WorkingDir, config.DefaultConfigName)
+			cfg, _ := config.LoadConfig(localConfigPath)
+			if err := session.Create(cfg); err != nil {
+				return err
+			}
+			if cfg != nil {
+				session.ApplyConfig(cfg)
+			}
+			session.SelectDefault()
+		}
+		target = session.Name
+		saveHistory(filepath.Base(result.WorkingDir), result.WorkingDir, target, "", "")
+	} else {
+		if sessionPath := tmux.GetSessionPath(target); sessionPath != "" {
+			saveHistory(filepath.Base(sessionPath), sessionPath, target, "", "")
+		}
+	}
+
+	return exec.Command("tmux", "set-option", "-g", "@atmux-popup-target", target).Run()
 }
 
 func attachToSession(name string) error {
