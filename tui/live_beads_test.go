@@ -3,7 +3,10 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestLoadLiveBeadsSummarySortsReadyIssuesFirst(t *testing.T) {
@@ -37,5 +40,23 @@ func TestLoadLiveBeadsSummarySortsReadyIssuesFirst(t *testing.T) {
 	}
 	if !summary.Issues[0].Ready || summary.Issues[2].Ready {
 		t.Fatalf("unexpected ready flags: %+v", summary.Issues)
+	}
+}
+
+func TestWrapStatusPartsKeepsEveryShortcut(t *testing.T) {
+	parts := []string{"[q]uit", "[a]ttach", "[↑↓]nav", "[⏎]expand/focus"}
+	lines := wrapStatusParts(parts, 16)
+	got := strings.Join(lines, " ")
+	want := strings.Join(parts, " ")
+	if got != want {
+		t.Fatalf("expected all shortcuts preserved %q, got %q", want, got)
+	}
+	for _, line := range lines {
+		if lipgloss.Width(line) > 16 {
+			t.Fatalf("expected line %q to fit width 16", line)
+		}
+	}
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped output, got %v", lines)
 	}
 }

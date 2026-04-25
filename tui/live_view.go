@@ -50,9 +50,10 @@ func (m LiveModel) View() string {
 	if m.beadsPanel && m.currentBeads.HasBeads {
 		beadsHeight = minInt(liveBeadsPanelRows, maxInt(0, m.height-5-searchHeight-urlHeight))
 	}
+	statusHeight := m.statusHeight()
 
 	// Tree + recents
-	treeHeight := m.height - 4 - searchHeight - urlHeight - beadsHeight // header(2) + separator(1) + status(1) + search + urls + beads
+	treeHeight := m.height - 3 - searchHeight - urlHeight - beadsHeight - statusHeight // header(2) + separator(1) + search + urls + beads + status
 	if treeHeight < 1 {
 		treeHeight = 1
 	}
@@ -387,32 +388,95 @@ func (m LiveModel) renderFuzzyHighlight(name string, baseStyle lipgloss.Style) s
 }
 
 func (m LiveModel) renderStatus() string {
-	hint := "[q]uit [a]ttach [↑↓]nav [⏎]expand/focus [r]efresh [d]efault [x]kill [c]rc [h]recents"
+	hintLines := m.statusHintLines()
+	right := m.statusMessage()
+
+	hintStyle := lipgloss.NewStyle().Foreground(dimColor)
+	rendered := make([]string, 0, len(hintLines)+1)
+	for i, line := range hintLines {
+		if i == len(hintLines)-1 && right != "" {
+			gap := m.width - lipgloss.Width(line) - lipgloss.Width(right)
+			if gap >= 1 {
+				rendered = append(rendered, hintStyle.Render(line)+strings.Repeat(" ", gap)+right)
+				continue
+			}
+		}
+		rendered = append(rendered, hintStyle.Render(line))
+	}
+	if right != "" && (len(hintLines) == 0 || m.width-lipgloss.Width(hintLines[len(hintLines)-1])-lipgloss.Width(right) < 1) {
+		rendered = append(rendered, right)
+	}
+	return strings.Join(rendered, "\n")
+}
+
+func (m LiveModel) statusHeight() int {
+	lines := m.statusHintLines()
+	if len(lines) == 0 {
+		return 1
+	}
+	right := m.statusMessage()
+	if right != "" && m.width-lipgloss.Width(lines[len(lines)-1])-lipgloss.Width(right) < 1 {
+		return len(lines) + 1
+	}
+	return len(lines)
+}
+
+func (m LiveModel) statusHintLines() []string {
+	return wrapStatusParts(m.statusHintParts(), m.width)
+}
+
+func (m LiveModel) statusHintParts() []string {
+	parts := []string{
+		"[q]uit",
+		"[a]ttach",
+		"[↑↓]nav",
+		"[⏎]expand/focus",
+		"[r]efresh",
+		"[d]efault",
+		"[x]kill",
+		"[c]rc",
+		"[h]recents",
+	}
 	if _, ok := m.selectedRecent(); ok {
-		hint += " [p]opup"
+		parts = append(parts, "[p]opup")
 	}
 	if m.currentBeads.HasBeads {
-		hint += " [b]eads"
+		parts = append(parts, "[b]eads")
 	}
 	if len(m.currentURLs) > 0 {
-		hint += " [1-9]open-url"
+		parts = append(parts, "[1-9]open-url")
 	}
-	left := lipgloss.NewStyle().Foreground(dimColor).Render(hint)
+	return parts
+}
 
-	right := ""
+func (m LiveModel) statusMessage() string {
 	if m.lastError != nil {
-		right = lipgloss.NewStyle().Foreground(errorColor).Render(m.lastError.Error())
-	} else if m.statusMsg != "" {
-		right = lipgloss.NewStyle().Foreground(activeColor).Render(m.statusMsg)
+		return lipgloss.NewStyle().Foreground(errorColor).Render(m.lastError.Error())
 	}
-
-	// Pad between left and right
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
+	if m.statusMsg != "" {
+		return lipgloss.NewStyle().Foreground(activeColor).Render(m.statusMsg)
 	}
+	return ""
+}
 
-	return left + strings.Repeat(" ", gap) + right
+func wrapStatusParts(parts []string, width int) []string {
+	if len(parts) == 0 {
+		return []string{""}
+	}
+	if width <= 0 {
+		return []string{strings.Join(parts, " ")}
+	}
+	lines := []string{parts[0]}
+	for _, part := range parts[1:] {
+		last := lines[len(lines)-1]
+		candidate := last + " " + part
+		if lipgloss.Width(candidate) <= width {
+			lines[len(lines)-1] = candidate
+			continue
+		}
+		lines = append(lines, part)
+	}
+	return lines
 }
 
 func (m LiveModel) renderBeadsPanel(height int) string {
