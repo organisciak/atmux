@@ -34,6 +34,11 @@ Controls:
   Up/Down or j/k   Navigate sessions
   Enter/Space       Expand/collapse session
   a                 Attach to selected session (exit live browser)
+  p                 Open selected recent project in a popup
+  d                 Set selected pane/window/session as default view
+  x                 Kill selected open session
+  c                 Start Claude Remote Control for selected session
+  b                 Toggle beads task panel for selected project
   r                 Refresh session list
   q/Esc             Quit (restores all panes)`,
 	RunE: runLive,

@@ -62,3 +62,11 @@ type RecentDeletedMsg struct {
 	ID  int64
 	Err error
 }
+
+// LiveActionMsg is sent after an AtMux Live action that runs outside the
+// normal refresh loop, such as opening a popup or killing a session.
+type LiveActionMsg struct {
+	Action string
+	Target string
+	Err    error
+}

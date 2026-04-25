@@ -31,7 +31,7 @@ func (m LiveModel) View() string {
 		sessionCount = lipgloss.NewStyle().Foreground(dimColor).Render(
 			fmt.Sprintf(" (%d sessions)", count))
 	}
-	b.WriteString(title + sessionCount + "\n")
+	b.WriteString(title + sessionCount + m.renderBeadsBadge() + "\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(dimColor).Render(strings.Repeat("─", m.width)) + "\n")
 
 	// Search box (if active)
@@ -46,9 +46,13 @@ func (m LiveModel) View() string {
 	if len(m.currentURLs) > 0 {
 		urlHeight = 1
 	}
+	beadsHeight := 0
+	if m.beadsPanel && m.currentBeads.HasBeads {
+		beadsHeight = minInt(liveBeadsPanelRows, maxInt(0, m.height-5-searchHeight-urlHeight))
+	}
 
 	// Tree + recents
-	treeHeight := m.height - 4 - searchHeight - urlHeight // header(2) + separator(1) + status(1) + search + urls
+	treeHeight := m.height - 4 - searchHeight - urlHeight - beadsHeight // header(2) + separator(1) + status(1) + search + urls + beads
 	if treeHeight < 1 {
 		treeHeight = 1
 	}
@@ -99,10 +103,25 @@ func (m LiveModel) View() string {
 		b.WriteString(m.renderURLs() + "\n")
 	}
 
+	if beadsHeight > 0 {
+		b.WriteString(m.renderBeadsPanel(beadsHeight) + "\n")
+	}
+
 	// Status bar
 	b.WriteString(m.renderStatus())
 
 	return b.String()
+}
+
+func (m LiveModel) renderBeadsBadge() string {
+	if !m.currentBeads.HasBeads {
+		return ""
+	}
+	label := fmt.Sprintf(" bd:%d", m.currentBeads.Count)
+	if m.currentBeads.Count > 0 {
+		return " " + beadsCountStyle.Render(label)
+	}
+	return " " + lipgloss.NewStyle().Foreground(dimColor).Render(label)
 }
 
 // urlButtonLabel formats the displayed text for a URL button. Kept short
@@ -206,6 +225,13 @@ func maxInt(a, b int) int {
 	return b
 }
 
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // renderNode renders a single tree node line.
 func (m LiveModel) renderNode(node *tmux.TreeNode, selected bool) string {
 	indent := strings.Repeat("  ", node.Level)
@@ -227,7 +253,9 @@ func (m LiveModel) renderNode(node *tmux.TreeNode, selected bool) string {
 			icon = "▸ "
 		}
 	case "pane":
-		if node.Active {
+		if node.Default {
+			icon = "◆ "
+		} else if node.Active {
 			icon = "● "
 		} else {
 			icon = "○ "
@@ -263,6 +291,9 @@ func (m LiveModel) renderNode(node *tmux.TreeNode, selected bool) string {
 	}
 
 	line := indent + icon + name
+	if node.Type == "pane" && node.Default {
+		line += lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render(" default")
+	}
 
 	// Truncate to width
 	if m.width > 0 && lipgloss.Width(line) > m.width {
@@ -356,7 +387,13 @@ func (m LiveModel) renderFuzzyHighlight(name string, baseStyle lipgloss.Style) s
 }
 
 func (m LiveModel) renderStatus() string {
-	hint := "[q]uit [a]ttach [↑↓]nav [⏎]expand/focus [r]efresh [h]ide-recents"
+	hint := "[q]uit [a]ttach [↑↓]nav [⏎]expand/focus [r]efresh [d]efault [x]kill [c]rc [h]recents"
+	if _, ok := m.selectedRecent(); ok {
+		hint += " [p]opup"
+	}
+	if m.currentBeads.HasBeads {
+		hint += " [b]eads"
+	}
 	if len(m.currentURLs) > 0 {
 		hint += " [1-9]open-url"
 	}
@@ -376,4 +413,52 @@ func (m LiveModel) renderStatus() string {
 	}
 
 	return left + strings.Repeat(" ", gap) + right
+}
+
+func (m LiveModel) renderBeadsPanel(height int) string {
+	if height < 1 {
+		return ""
+	}
+	headerLabel := fmt.Sprintf(" beads %d open [b] hide ", m.currentBeads.Count)
+	header := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).
+		Render("─" + headerLabel + strings.Repeat("─", maxInt(0, m.width-lipgloss.Width(headerLabel)-1)))
+
+	lines := []string{header}
+	if m.currentBeads.Err != nil {
+		lines = append(lines, lipgloss.NewStyle().Foreground(errorColor).Render("  "+m.currentBeads.Err.Error()))
+	} else if m.currentBeads.Count == 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("  no open beads issues"))
+	} else {
+		for _, issue := range m.currentBeads.Issues {
+			state := "blocked"
+			lineStyle := lipgloss.NewStyle().Foreground(dimColor)
+			if issue.Ready {
+				state = "ready"
+				lineStyle = lipgloss.NewStyle().Foreground(activeColor)
+			}
+			plain := truncatePlainLine(fmt.Sprintf("  P%d %-7s %s %s", issue.Priority, state, issue.ID, issue.Title), m.width)
+			lines = append(lines, lineStyle.Render(plain))
+			if len(lines) >= height {
+				break
+			}
+		}
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:height], "\n")
+}
+
+func truncatePlainLine(line string, width int) string {
+	if width <= 0 || lipgloss.Width(line) <= width {
+		return line
+	}
+	runes := []rune(line)
+	if width <= 1 {
+		return ""
+	}
+	if len(runes) > width-1 {
+		runes = runes[:width-1]
+	}
+	return string(runes) + "…"
 }

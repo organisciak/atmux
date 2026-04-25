@@ -48,7 +48,8 @@ type TreeNode struct {
 	Expanded bool
 	Level    int
 	Active   bool
-	Attached bool // For sessions
+	Default  bool   // Pane is the session's AtMux Live default display target
+	Attached bool   // For sessions
 	Host     string // Remote host label (empty for local)
 	Children []*TreeNode
 }

@@ -59,6 +59,9 @@ type LiveModel struct {
 	// directory so repeated navigation doesn't re-parse configs.
 	currentURLs []config.URLConfig
 	urlsCache   map[string][]config.URLConfig
+
+	currentBeads liveBeadsSummary
+	beadsPanel   bool // Toggle with 'b'
 }
 
 // urlClickBounds records the rendered position of a URL button so the
@@ -119,6 +122,7 @@ func (m LiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.tree = msg.Tree
 		m.rebuildFlatNodes()
+		m.refreshProjectMetadata()
 
 		// Auto-swap on first load
 		if m.displayedPaneID == "" && len(m.flatNodes) > 0 {
@@ -134,8 +138,31 @@ func (m LiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err == nil {
 			m.allRecents = msg.Entries
 			m.refilterRecents()
+			m.refreshProjectMetadata()
 		}
 		return m, nil
+
+	case LiveActionMsg:
+		if msg.Err != nil {
+			m.lastError = msg.Err
+			m.statusMsg = msg.Action + " failed"
+			return m, nil
+		}
+		m.lastError = nil
+		if msg.Target != "" {
+			m.statusMsg = msg.Action + ": " + msg.Target
+		} else {
+			m.statusMsg = msg.Action
+		}
+		if msg.Action == "default set" {
+			m.rebuildFlatNodes()
+			m.refreshProjectMetadata()
+			return m, nil
+		}
+		if msg.Action == "remote control" {
+			return m, nil
+		}
+		return m, tea.Batch(fetchTree, fetchRecents)
 
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
@@ -263,9 +290,30 @@ func (m LiveModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		return m, tea.Batch(fetchTree, fetchRecents)
 
+	case "p":
+		if entry, ok := m.selectedRecent(); ok {
+			m.statusMsg = "opening popup..."
+			return m, openRecentPopupCmd(entry)
+		}
+		return m, nil
+
+	case "d":
+		return m, m.setSelectedDefault()
+
+	case "x":
+		return m, m.killSelectedSession()
+
+	case "c":
+		return m, m.startRemoteControl()
+
+	case "b":
+		m.beadsPanel = !m.beadsPanel
+		return m, nil
+
 	case "h":
 		m.recentsHidden = !m.recentsHidden
 		m.clampSelection()
+		m.refreshProjectMetadata()
 		return m, nil
 
 	case "/":
@@ -294,7 +342,7 @@ func (m LiveModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Letters: auto-activate search
 		if len(key) == 1 {
 			ch := rune(key[0])
-			if unicode.IsLetter(ch) && ch != 'a' && ch != 'q' && ch != 'r' && ch != 'h' && ch != 'j' && ch != 'k' {
+			if unicode.IsLetter(ch) && ch != 'a' && ch != 'b' && ch != 'c' && ch != 'd' && ch != 'p' && ch != 'q' && ch != 'r' && ch != 'h' && ch != 'j' && ch != 'k' && ch != 'x' {
 				m.searchActive = true
 				m.searchManual = false
 				m.searchQuery = string(unicode.ToLower(ch))
@@ -370,7 +418,7 @@ func (m LiveModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // then advances to subsequent items if that session is gone entirely. Avoids
 // leaving the user stuck on a stale selection with a "swap failed" message.
 func (m *LiveModel) swapToSelected() {
-	m.refreshURLs()
+	m.refreshProjectMetadata()
 	node := m.selectedNode()
 	if node == nil || m.tree == nil {
 		return
@@ -433,7 +481,7 @@ func (m *LiveModel) recoverFromSwapFailure(origErr error) {
 			m.lastError = nil
 			m.lastSwapTarget = node.Target
 			m.statusMsg = node.Name
-			m.refreshURLs()
+			m.refreshProjectMetadata()
 			return
 		}
 	}
@@ -464,6 +512,20 @@ func (m *LiveModel) refreshURLs() {
 	}
 	m.urlsCache[workDir] = urls
 	m.currentURLs = urls
+}
+
+func (m *LiveModel) refreshProjectMetadata() {
+	m.refreshURLs()
+	m.refreshBeads()
+}
+
+func (m *LiveModel) refreshBeads() {
+	workDir := m.selectedWorkingDir()
+	if workDir == "" {
+		m.currentBeads = liveBeadsSummary{}
+		return
+	}
+	m.currentBeads = loadLiveBeadsSummary(workDir)
 }
 
 // selectedWorkingDir resolves a filesystem path for the current selection,
@@ -500,6 +562,106 @@ func (m *LiveModel) openURL(idx int) {
 	m.statusMsg = "opened: " + u.Label
 }
 
+func openRecentPopupCmd(entry history.Entry) tea.Cmd {
+	return func() tea.Msg {
+		name, err := reviveRecentSession(entry.WorkingDirectory)
+		if err != nil {
+			return LiveActionMsg{Action: "popup", Target: entry.Name, Err: err}
+		}
+		if err := tmux.OpenSessionPopup(name); err != nil {
+			return LiveActionMsg{Action: "popup", Target: name, Err: err}
+		}
+		return LiveActionMsg{Action: "popup closed", Target: name}
+	}
+}
+
+func (m LiveModel) setSelectedDefault() tea.Cmd {
+	node := m.selectedNode()
+	if node == nil || m.tree == nil {
+		return nil
+	}
+	sessionName := m.sessionForNode(node)
+	target := tmux.FindPaneTargetForNode(node, m.tree)
+	if sessionName == "" || target == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		err := tmux.SetSessionDefaultPane(sessionName, target)
+		return LiveActionMsg{Action: "default set", Target: target, Err: err}
+	}
+}
+
+func (m *LiveModel) killSelectedSession() tea.Cmd {
+	node := m.selectedNode()
+	if node == nil {
+		return nil
+	}
+	sessionName := m.sessionForNode(node)
+	if sessionName == "" || sessionName == tmux.LiveSessionName {
+		return nil
+	}
+	rightPaneID := m.opts.RightPaneID
+	displayedPaneID := m.displayedPaneID
+	displayedSession := sessionNameFromTarget(m.lastSwapTarget)
+	if displayedPaneID != "" && displayedSession == sessionName {
+		m.displayedPaneID = ""
+		m.lastSwapTarget = ""
+	}
+	return func() tea.Msg {
+		if displayedPaneID != "" && displayedSession == sessionName {
+			tmux.RestoreDisplayedPane(rightPaneID, &displayedPaneID)
+		}
+		err := tmux.KillSession(sessionName)
+		return LiveActionMsg{Action: "killed", Target: sessionName, Err: err}
+	}
+}
+
+func (m LiveModel) startRemoteControl() tea.Cmd {
+	session, ok := m.selectedSession()
+	if !ok {
+		return nil
+	}
+	pane, ok := tmux.FindClaudePaneInSession(session)
+	if !ok {
+		return func() tea.Msg {
+			return LiveActionMsg{Action: "remote control", Target: session.Name, Err: errNoClaudePane{}}
+		}
+	}
+	target := pane.ID
+	if target == "" {
+		target = pane.Target
+	}
+	command := "/remote-control " + liveRemoteControlName(session.Name)
+	return func() tea.Msg {
+		err := tmux.SendCommandWithMethod(target, command, tmux.SendMethodEnterDelayed)
+		return LiveActionMsg{Action: "remote control", Target: session.Name, Err: err}
+	}
+}
+
+type errNoClaudePane struct{}
+
+func (errNoClaudePane) Error() string {
+	return "no Claude Code pane in selected session"
+}
+
+func liveRemoteControlName(sessionName string) string {
+	name := strings.TrimPrefix(sessionName, "agent-")
+	name = strings.TrimPrefix(name, "atmux-")
+	name = strings.ReplaceAll(name, "_", " ")
+	name = strings.ReplaceAll(name, "-", " ")
+	return strings.Join(strings.Fields(name), " ")
+}
+
+func sessionNameFromTarget(target string) string {
+	if target == "" {
+		return ""
+	}
+	if idx := strings.Index(target, ":"); idx >= 0 {
+		return target[:idx]
+	}
+	return target
+}
+
 // totalItems returns the count of selectable rows (tree nodes + visible recents).
 func (m *LiveModel) totalItems() int {
 	return len(m.flatNodes) + len(m.shownRecents())
@@ -524,6 +686,23 @@ func (m *LiveModel) selectedRecent() (history.Entry, bool) {
 		return history.Entry{}, false
 	}
 	return recents[idx], true
+}
+
+func (m *LiveModel) selectedSession() (tmux.TmuxSession, bool) {
+	node := m.selectedNode()
+	if node == nil || m.tree == nil {
+		return tmux.TmuxSession{}, false
+	}
+	sessionName := m.sessionForNode(node)
+	if sessionName == "" {
+		return tmux.TmuxSession{}, false
+	}
+	for _, sess := range m.tree.Sessions {
+		if sess.Name == sessionName {
+			return sess, true
+		}
+	}
+	return tmux.TmuxSession{}, false
 }
 
 // activeSessionNames returns the set of session names currently in the tree.
@@ -606,6 +785,7 @@ func (m *LiveModel) toggleExpand() {
 		expanded := m.isExpanded(node.Type, node.Target)
 		m.expanded[key] = !expanded
 		m.rebuildFlatNodes()
+		m.refreshProjectMetadata()
 	}
 }
 
@@ -632,6 +812,7 @@ func (m *LiveModel) rebuildFlatNodes() {
 		}
 
 		sessExpanded := m.isExpanded("session", sess.Name)
+		defaultTarget := tmux.FindDefaultPaneTarget(sess)
 		sessNode := &tmux.TreeNode{
 			Type:     "session",
 			Name:     sess.Name,
@@ -659,11 +840,12 @@ func (m *LiveModel) rebuildFlatNodes() {
 				if winExpanded {
 					for _, pane := range win.Panes {
 						paneNode := &tmux.TreeNode{
-							Type:   "pane",
-							Name:   pane.Title,
-							Target: pane.Target,
-							Level:  2,
-							Active: pane.Active,
+							Type:    "pane",
+							Name:    pane.Title,
+							Target:  pane.Target,
+							Level:   2,
+							Active:  pane.Active,
+							Default: pane.Target == defaultTarget,
 						}
 						if paneNode.Name == "" {
 							paneNode.Name = pane.Command
@@ -767,6 +949,7 @@ func (m *LiveModel) clearSearch() {
 	m.flatNodes = m.allFlatNodes
 	m.refilterRecents()
 	m.clampSelection()
+	m.refreshProjectMetadata()
 }
 
 // sessionForNode finds the session name that a node belongs to.

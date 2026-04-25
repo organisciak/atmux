@@ -17,6 +17,7 @@ const (
 	optLiveDisplayed = "@atmux_live_displayed"
 	optLiveLeftPane  = "@atmux_live_left_pane"
 	optLiveLeftWidth = "@atmux_live_left_width"
+	optDefaultPane   = "@atmux_default_pane"
 )
 
 // LiveSession holds state for the live browser session.
@@ -148,6 +149,15 @@ func getTmuxGlobalOption(name string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// getTmuxSessionOption reads a tmux user option scoped to a session.
+func getTmuxSessionOption(sessionName, name string) string {
+	out, err := exec.Command("tmux", "show-option", "-t", sessionName, "-gv", name).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // paneExists returns true if the given pane ID is currently known to tmux.
 func paneExists(paneID string) bool {
 	if paneID == "" {
@@ -269,6 +279,16 @@ func FocusPane(paneID string) {
 	exec.Command("tmux", "select-pane", "-t", paneID).Run()
 }
 
+// OpenSessionPopup opens a nested tmux client for the session in a tmux popup
+// and blocks until the popup exits.
+func OpenSessionPopup(sessionName string) error {
+	if sessionName == "" {
+		return nil
+	}
+	command := shellQuoteJoin([]string{"env", "TMUX=", "tmux", "attach-session", "-t", sessionName})
+	return exec.Command("tmux", "display-popup", "-E", "-w", "90%", "-h", "90%", command).Run()
+}
+
 // CleanupLiveSession restores panes and kills the live session.
 func CleanupLiveSession(rightPaneID string, displayedPaneID *string, originalSession string) {
 	RestoreDisplayedPane(rightPaneID, displayedPaneID)
@@ -309,14 +329,29 @@ func KillLiveSession() {
 	ClearLiveSessionOptions()
 }
 
-// FindBestPaneID returns the pane ID of the best pane to display for a session.
-// Priority: (1) first Claude Code pane, (2) active pane of active window, (3) first pane.
-func FindBestPaneID(sess TmuxSession) string {
+// GetSessionDefaultPane returns the AtMux Live default pane target stored on a
+// tmux session, or an empty string when no explicit default has been set.
+func GetSessionDefaultPane(sessionName string) string {
+	return getTmuxSessionOption(sessionName, optDefaultPane)
+}
+
+// SetSessionDefaultPane stores the AtMux Live default pane target for a session.
+func SetSessionDefaultPane(sessionName, target string) error {
+	if sessionName == "" || target == "" {
+		return nil
+	}
+	return exec.Command("tmux", "set-option", "-t", sessionName, optDefaultPane, target).Run()
+}
+
+// FindBestPaneTarget returns the pane target of the best pane to display for a
+// session. Priority: first Claude Code pane, active pane of active window, then
+// first pane.
+func FindBestPaneTarget(sess TmuxSession) string {
 	// 1. Look for a Claude Code pane
 	for _, win := range sess.Windows {
 		for _, pane := range win.Panes {
 			if isClaudePane(pane) {
-				return GetPaneID(pane.Target)
+				return pane.Target
 			}
 		}
 	}
@@ -326,49 +361,88 @@ func FindBestPaneID(sess TmuxSession) string {
 		if win.Active {
 			for _, pane := range win.Panes {
 				if pane.Active {
-					return GetPaneID(pane.Target)
+					return pane.Target
 				}
 			}
 			// Active window but no active pane marked? Use first pane
 			if len(win.Panes) > 0 {
-				return GetPaneID(win.Panes[0].Target)
+				return win.Panes[0].Target
 			}
 		}
 	}
 
 	// 3. First pane of first window
 	if len(sess.Windows) > 0 && len(sess.Windows[0].Panes) > 0 {
-		return GetPaneID(sess.Windows[0].Panes[0].Target)
+		return sess.Windows[0].Panes[0].Target
 	}
 
 	return ""
 }
 
+// FindDefaultPaneTarget returns the explicit AtMux Live default pane when it
+// still exists; otherwise it falls back to the best available pane.
+func FindDefaultPaneTarget(sess TmuxSession) string {
+	stored := GetSessionDefaultPane(sess.Name)
+	if stored != "" {
+		for _, win := range sess.Windows {
+			for _, pane := range win.Panes {
+				if pane.Target == stored {
+					return stored
+				}
+			}
+		}
+	}
+	return FindBestPaneTarget(sess)
+}
+
+// FindBestPaneID returns the pane ID of the default/best pane for a session.
+func FindBestPaneID(sess TmuxSession) string {
+	target := FindDefaultPaneTarget(sess)
+	if target == "" {
+		return ""
+	}
+	return GetPaneID(target)
+}
+
 // FindPaneIDForNode returns the best pane ID for the given tree node.
-// For sessions: finds the best pane (Claude or first).
-// For windows: finds the active pane of that window.
+// For sessions: finds the configured default pane, or best pane.
+// For windows: finds the configured default pane in that window, or active pane.
 // For panes: returns that pane's ID directly.
 func FindPaneIDForNode(node *TreeNode, tree *Tree) string {
+	target := FindPaneTargetForNode(node, tree)
+	if target == "" {
+		return ""
+	}
+	return GetPaneID(target)
+}
+
+// FindPaneTargetForNode returns the pane target that should be displayed for
+// the given tree node.
+func FindPaneTargetForNode(node *TreeNode, tree *Tree) string {
 	if node == nil || tree == nil {
 		return ""
 	}
 
 	switch node.Type {
 	case "pane":
-		return GetPaneID(node.Target)
+		return node.Target
 	case "window":
 		// Find this window and return its active/first pane
 		for _, sess := range tree.Sessions {
 			for _, win := range sess.Windows {
 				winTarget := sess.Name + ":" + fmt.Sprintf("%d", win.Index)
 				if winTarget == node.Target {
+					defaultTarget := FindDefaultPaneTarget(sess)
+					if strings.HasPrefix(defaultTarget, winTarget+".") {
+						return defaultTarget
+					}
 					for _, pane := range win.Panes {
 						if pane.Active {
-							return GetPaneID(pane.Target)
+							return pane.Target
 						}
 					}
 					if len(win.Panes) > 0 {
-						return GetPaneID(win.Panes[0].Target)
+						return win.Panes[0].Target
 					}
 				}
 			}
@@ -376,7 +450,7 @@ func FindPaneIDForNode(node *TreeNode, tree *Tree) string {
 	case "session":
 		for _, sess := range tree.Sessions {
 			if sess.Name == node.Target {
-				return FindBestPaneID(sess)
+				return FindDefaultPaneTarget(sess)
 			}
 		}
 	}

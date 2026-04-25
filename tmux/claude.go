@@ -56,6 +56,24 @@ func FindClaudePanes(executors []TmuxExecutor) []ClaudePane {
 	return results
 }
 
+// FindClaudePaneInSession returns the first pane in a session that appears to
+// be running Claude Code.
+func FindClaudePaneInSession(sess TmuxSession) (Pane, bool) {
+	for _, win := range sess.Windows {
+		for _, pane := range win.Panes {
+			if isClaudePane(pane) {
+				return pane, true
+			}
+		}
+	}
+	return Pane{}, false
+}
+
+// IsClaudePane reports whether the pane appears to be running Claude Code.
+func IsClaudePane(pane Pane) bool {
+	return isClaudePane(pane)
+}
+
 // isClaudePane returns true if the pane appears to be running Claude Code.
 // Claude Code sets pane_title to contain "Claude Code" and reports its semver
 // as pane_current_command (e.g. "2.1.71"). A pane whose title says "Claude Code"
