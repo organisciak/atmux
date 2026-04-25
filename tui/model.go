@@ -38,7 +38,7 @@ type Options struct {
 	RefreshInterval time.Duration
 	PopupMode       bool
 	DebugMode       bool
-	MobileMode      bool // Force mobile layout (auto-detected if width < 60)
+	MobileMode      bool                // Force mobile layout (auto-detected if width < 60)
 	Executors       []tmux.TmuxExecutor // Executors for multi-host browsing (nil = local only)
 }
 
@@ -619,6 +619,10 @@ func (m *Model) buildFlatNodes() []*tmux.TreeNode {
 	// Single-host (local) mode: build from m.tree
 	var nodes []*tmux.TreeNode
 	for _, sess := range m.tree.Sessions {
+		// Filter out the live browser session
+		if sess.Name == tmux.LiveSessionName {
+			continue
+		}
 		sessExpanded := m.isExpanded("session", sess.Name, true)
 		sessNode := &tmux.TreeNode{
 			Type:     "session",
@@ -713,6 +717,9 @@ func (m *Model) buildMultiHostFlatNodes() []*tmux.TreeNode {
 		}
 
 		for _, sess := range ht.Tree.Sessions {
+			if sess.Name == tmux.LiveSessionName {
+				continue
+			}
 			sessExpanded := m.isExpanded("session", hostLabel+"/"+sess.Name, true)
 			sessNode := &tmux.TreeNode{
 				Type:     "session",

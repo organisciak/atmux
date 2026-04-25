@@ -1,30 +1,19 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
-
-	"github.com/porganisciak/agent-tmux/tmux"
 	"github.com/spf13/cobra"
 )
 
+// landingCmd is kept for backwards compatibility; it now delegates to sessions.
 var landingCmd = &cobra.Command{
-	Use:   "landing",
-	Short: "Show the landing page",
-	Long:  "Show the interactive landing page for session selection.",
-	RunE:  runLandingCmd,
+	Use:    "landing",
+	Short:  "Show sessions (deprecated: use 'sessions')",
+	Hidden: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runSessions(cmd, args)
+	},
 }
 
 func init() {
 	rootCmd.AddCommand(landingCmd)
-}
-
-func runLandingCmd(cmd *cobra.Command, args []string) error {
-	workingDir, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
-	}
-
-	session := tmux.NewSession(workingDir)
-	return runLandingPage(session, workingDir)
 }

@@ -50,7 +50,6 @@ func (s *Session) Exists() bool {
 func DefaultAgents() []config.AgentConfig {
 	return []config.AgentConfig{
 		{Command: "claude --dangerously-skip-permissions"},
-		{Command: "codex --full-auto"},
 	}
 }
 

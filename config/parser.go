@@ -41,12 +41,19 @@ type RemoteProjectConfig struct {
 	SessionName string // Preferred tmux session name on the remote host
 }
 
+// URLConfig is a project quick-link surfaced in `atmux live`.
+type URLConfig struct {
+	Label string // Display label (defaults to URL when omitted)
+	URL   string // Destination opened with the platform's browser
+}
+
 type Config struct {
 	Windows        []WindowConfig        // New windows to create
 	AgentPanes     []PaneConfig          // Extra panes to add to agents window
 	CoreAgents     []AgentConfig         // Core agent panes (from agent: directive)
 	RemoteHosts    []RemoteHostConfig    // Remote hosts for sessions list
 	RemoteProjects []RemoteProjectConfig // Reusable remote projects
+	URLs           []URLConfig           // Quick-link URLs for the project
 }
 
 const (
@@ -245,6 +252,7 @@ func mergeConfigs(global, local *Config) *Config {
 		result.Windows = append(result.Windows, global.Windows...)
 		result.RemoteHosts = append(result.RemoteHosts, global.RemoteHosts...)
 		result.RemoteProjects = append(result.RemoteProjects, global.RemoteProjects...)
+		result.URLs = append(result.URLs, global.URLs...)
 	}
 
 	// Override/add from local
@@ -258,6 +266,7 @@ func mergeConfigs(global, local *Config) *Config {
 		result.Windows = append(result.Windows, local.Windows...)
 		result.RemoteHosts = mergeRemoteHosts(result.RemoteHosts, local.RemoteHosts)
 		result.RemoteProjects = mergeRemoteProjects(result.RemoteProjects, local.RemoteProjects)
+		result.URLs = append(result.URLs, local.URLs...)
 	}
 
 	return result
@@ -407,6 +416,23 @@ func Parse(path string) (*Config, error) {
 				return nil, fmt.Errorf("%s:%d: remote_project_dir requires a directory value", path, lineNumber)
 			}
 			currentRemoteProject.WorkingDir = value
+
+		case "url":
+			if value == "" {
+				continue
+			}
+			label, target := value, value
+			if i := strings.Index(value, "|"); i >= 0 {
+				label = strings.TrimSpace(value[:i])
+				target = strings.TrimSpace(value[i+1:])
+				if label == "" {
+					label = target
+				}
+			}
+			if target == "" {
+				continue
+			}
+			config.URLs = append(config.URLs, URLConfig{Label: label, URL: target})
 
 		case "remote_project_session":
 			if currentRemoteProject == nil {
@@ -614,6 +640,14 @@ func DefaultTemplate() string {
 # vpane:npm run dev
 # vpane:npm test -- --watch
 
+# ── Quick-Link URLs ──────────────────────────────────────────────────
+# Surfaces clickable URLs in the bottom row of "atmux live". Press the
+# matching number key (1-9) or click to open in your default browser.
+# Syntax: url:Label|https://...   (label optional; falls back to URL)
+#
+# url:Dev|http://localhost:5173
+# url:Docs|https://example.com/docs
+
 # ── Remote Hosts ─────────────────────────────────────────────────────
 # Define remote hosts so you can use short aliases with --remote=devbox
 #
@@ -641,7 +675,6 @@ func GlobalTemplate() string {
 
 # Core agent panes (shown in every session's agents window)
 agent:claude --dangerously-skip-permissions
-agent:codex --full-auto
 
 # Directives:
 #   agent:command   - Define a core agent pane

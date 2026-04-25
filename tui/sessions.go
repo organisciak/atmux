@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -31,6 +32,8 @@ type SessionsOptions struct {
 	Executors        []tmux.TmuxExecutor // Executors for local + remote hosts
 	ShowBeads        bool                // Show beads issue counts per session
 	DisableStaleness bool                // Disable staleness indicators
+	CurrentSession   string              // Session name for current working directory
+	CurrentDir       string              // Current working directory path
 }
 
 // SessionsResult contains the outcome of the sessions list interaction.
@@ -48,7 +51,8 @@ func RunSessionsList(opts SessionsOptions) (*SessionsResult, error) {
 	if len(executors) == 0 {
 		executors = []tmux.TmuxExecutor{tmux.NewLocalExecutor()}
 	}
-	m := newSessionsModel(executors, opts.ShowBeads, opts.DisableStaleness)
+	opts.Executors = executors
+	m := newSessionsModelWithOpts(opts)
 	programOptions := []tea.ProgramOption{
 		tea.WithMouseCellMotion(),
 	}
@@ -82,6 +86,8 @@ func RunSessionsList(opts SessionsOptions) (*SessionsResult, error) {
 }
 
 type sessionsModel struct {
+	currentSession     string // Session name for current working directory
+	currentDir         string // Current working directory path
 	lines              []tmux.SessionLine
 	historyEntries     []history.Entry
 	memoryBySession    map[string]tmux.SessionMemory
@@ -99,22 +105,32 @@ type sessionsModel struct {
 	memoryError        error
 	executors          []tmux.TmuxExecutor
 	executorMap        map[string]tmux.TmuxExecutor
-	rawHistoryEntries  []history.Entry   // Unfiltered history (for re-filtering)
-	pendingExecutors   int               // Executors still loading
+	rawHistoryEntries  []history.Entry // Unfiltered history (for re-filtering)
+	pendingExecutors   int             // Executors still loading
 	confirmKill        bool
 	killSessionName    string
 	lineJump           lineJumpState
 
 	// Staleness
-	stalenessDisabled    bool
-	freshThreshold       time.Duration
-	staleThreshold       time.Duration
-	suggestionThreshold  int
-	confirmKillStale     bool
-	staleSessionNames    []string
+	stalenessDisabled   bool
+	freshThreshold      time.Duration
+	staleThreshold      time.Duration
+	suggestionThreshold int
+	confirmKillStale    bool
+	staleSessionNames   []string
+
+	// Fuzzy search
+	searchActive  bool
+	searchQuery   string
+	searchManual  bool               // Opened with '/' (allows numbers in query)
+	filteredLines []tmux.SessionLine // Filtered active sessions
+	filteredHist  []history.Entry    // Filtered history entries
+	lineIndexMap  []int              // Maps filtered index → original m.lines index
+	histIndexMap  []int              // Maps filtered index → original m.historyEntries index
 }
 
-func newSessionsModel(executors []tmux.TmuxExecutor, showBeads bool, disableStaleness bool) sessionsModel {
+func newSessionsModelWithOpts(opts SessionsOptions) sessionsModel {
+	executors := opts.Executors
 	executorMap := make(map[string]tmux.TmuxExecutor, len(executors))
 	for _, exec := range executors {
 		executorMap[exec.HostLabel()] = exec
@@ -134,7 +150,7 @@ func newSessionsModel(executors []tmux.TmuxExecutor, showBeads bool, disableStal
 		freshThreshold, staleThreshold = (&config.StalenessConfig{}).ParsedStalenessThresholds()
 		suggestionThreshold = (&config.StalenessConfig{}).EffectiveSuggestionThreshold()
 	}
-	if disableStaleness {
+	if opts.DisableStaleness {
 		stalenessDisabled = true
 	}
 
@@ -142,13 +158,23 @@ func newSessionsModel(executors []tmux.TmuxExecutor, showBeads bool, disableStal
 		selectedIndex:       0,
 		executors:           executors,
 		executorMap:         executorMap,
-		showBeads:           showBeads,
+		showBeads:           opts.ShowBeads,
 		pendingExecutors:    len(executors),
 		stalenessDisabled:   stalenessDisabled,
 		freshThreshold:      freshThreshold,
 		staleThreshold:      staleThreshold,
 		suggestionThreshold: suggestionThreshold,
+		currentSession:      opts.CurrentSession,
+		currentDir:          opts.CurrentDir,
 	}
+}
+
+func newSessionsModel(executors []tmux.TmuxExecutor, showBeads bool, disableStaleness bool) sessionsModel {
+	return newSessionsModelWithOpts(SessionsOptions{
+		Executors:        executors,
+		ShowBeads:        showBeads,
+		DisableStaleness: disableStaleness,
+	})
 }
 
 func (m sessionsModel) Init() tea.Cmd {
@@ -400,11 +426,67 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 	case tea.KeyMsg:
+		// Search mode key handling
+		if m.searchActive {
+			key := msg.String()
+			switch key {
+			case "esc":
+				m.clearSessionsSearch()
+				return m, nil
+			case "backspace":
+				if len(m.searchQuery) > 0 {
+					m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+					if m.searchQuery == "" {
+						m.clearSessionsSearch()
+					} else {
+						m.applySessionsSearch()
+					}
+				} else {
+					m.clearSessionsSearch()
+				}
+				return m, nil
+			case "enter":
+				// Accept selection: resolve to original index, close search
+				origIdx, isHist := m.resolveOriginalIndex(m.selectedIndex)
+				m.clearSessionsSearch()
+				if isHist {
+					m.selectedIndex = len(m.lines) + origIdx
+				} else {
+					m.selectedIndex = origIdx
+				}
+				return m.selectCurrent()
+			case "up", "ctrl+p":
+				if m.selectedIndex > 0 {
+					m.selectedIndex--
+				}
+				return m, nil
+			case "down", "ctrl+n":
+				total := m.visibleTotalItems()
+				if m.selectedIndex < total-1 {
+					m.selectedIndex++
+				}
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			default:
+				if len(key) == 1 {
+					ch := rune(key[0])
+					if unicode.IsLetter(ch) || (m.searchManual && unicode.IsDigit(ch)) || ch == '-' || ch == '_' {
+						m.searchQuery += string(unicode.ToLower(ch))
+						m.applySessionsSearch()
+						return m, nil
+					}
+				}
+			}
+			return m, nil
+		}
+
 		if idx, ok := m.lineJump.consumeKey(msg, len(m.lines)); ok {
 			m.selectedIndex = idx
 			return m, nil
 		}
-		switch msg.String() {
+		key := msg.String()
+		switch key {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
 		case "up", "k":
@@ -420,6 +502,20 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			return m.selectCurrent()
+		case "/":
+			m.searchActive = true
+			m.searchManual = true
+			m.searchQuery = ""
+			return m, nil
+		case "r", "n":
+			// Resume/create session for current directory
+			if m.currentDir != "" {
+				m.attachSession = m.currentSession
+				m.reviveDir = m.currentDir
+				m.isHistorySelection = true
+				return m, tea.Quit
+			}
+			return m, nil
 		case "S":
 			if !m.stalenessDisabled {
 				stale := m.staleSessions()
@@ -442,6 +538,20 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			return m, nil
+		default:
+			// Letters (except reserved) auto-activate search
+			if len(key) == 1 {
+				ch := rune(key[0])
+				reservedKeys := map[rune]bool{'q': true, 'j': true, 'k': true, 'x': true, 'S': true}
+				if unicode.IsLetter(ch) && !reservedKeys[ch] {
+					m.searchActive = true
+					m.searchManual = false
+					m.searchQuery = string(unicode.ToLower(ch))
+					m.selectedIndex = 0
+					m.applySessionsSearch()
+					return m, nil
+				}
+			}
 		}
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
@@ -539,17 +649,18 @@ func (m sessionsModel) filterHistory(entries []history.Entry) []history.Entry {
 
 // selectCurrent handles selection of the current item.
 func (m sessionsModel) selectCurrent() (tea.Model, tea.Cmd) {
-	if m.selectedIndex < len(m.lines) {
-		// Active session
-		line := m.lines[m.selectedIndex]
+	vLines := m.visibleLines()
+	vHist := m.visibleHistory()
+
+	if m.selectedIndex < len(vLines) {
+		line := vLines[m.selectedIndex]
 		m.attachSession = line.Name
 		m.selectedHost = line.Host
 		m.isHistorySelection = false
 	} else {
-		// History entry
-		histIdx := m.selectedIndex - len(m.lines)
-		if histIdx >= 0 && histIdx < len(m.historyEntries) {
-			entry := m.historyEntries[histIdx]
+		histIdx := m.selectedIndex - len(vLines)
+		if histIdx >= 0 && histIdx < len(vHist) {
+			entry := vHist[histIdx]
 			m.attachSession = entry.SessionName
 			m.reviveDir = entry.WorkingDirectory
 			m.isHistorySelection = true
@@ -565,11 +676,16 @@ func (m sessionsModel) View() string {
 	}
 
 	title := lipgloss.NewStyle().Bold(true).Render("Sessions")
+	vLines := m.visibleLines()
+	vHist := m.visibleHistory()
 	xHint := "x remove"
-	if m.selectedIndex < len(m.lines) {
+	if m.selectedIndex < len(vLines) {
 		xHint = "x kill"
 	}
-	subtitleParts := "↑↓ select, digits jump, Enter attach, " + xHint
+	subtitleParts := "↑↓ nav, / search, Enter attach, " + xHint
+	if m.currentDir != "" {
+		subtitleParts += ", r resume"
+	}
 	if !m.stalenessDisabled {
 		subtitleParts += ", S kill-stale"
 	}
@@ -615,6 +731,41 @@ func (m sessionsModel) View() string {
 
 	sections = append(sections, title, subtitle, "")
 
+	// Current directory session banner
+	if m.currentSession != "" && !m.searchActive {
+		isActive := false
+		for _, line := range m.lines {
+			if line.Name == m.currentSession {
+				isActive = true
+				break
+			}
+		}
+		var statusText string
+		var bannerStyle lipgloss.Style
+		if isActive {
+			statusText = "active"
+			bannerStyle = lipgloss.NewStyle().Foreground(activeColor)
+		} else {
+			statusText = "not started"
+			bannerStyle = lipgloss.NewStyle().Foreground(dimColor)
+		}
+		projectLabel := lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Render("project  ")
+		sessionName := formatSessionName(m.currentSession, bannerStyle)
+		status := lipgloss.NewStyle().Foreground(dimColor).Render(" (" + statusText + ")")
+		resumeHint := lipgloss.NewStyle().Foreground(dimColor).Render("  [r]esume")
+		sections = append(sections, projectLabel+sessionName+status+resumeHint, "")
+	}
+
+	// Search box
+	if m.searchActive {
+		searchLabel := lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Render("/")
+		searchText := lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Render(m.searchQuery)
+		cursor := lipgloss.NewStyle().Foreground(primaryColor).Render("▎")
+		matchInfo := lipgloss.NewStyle().Foreground(dimColor).Render(
+			fmt.Sprintf(" (%d)", len(vLines)+len(vHist)))
+		sections = append(sections, searchLabel+searchText+cursor+matchInfo)
+	}
+
 	// Suggestion banner when many sessions and some are stale
 	if !m.stalenessDisabled && len(m.lines) >= m.suggestionThreshold {
 		staleCount := m.staleSessionCount()
@@ -639,16 +790,16 @@ func (m sessionsModel) View() string {
 	// by host via groupSessionsByHost) and insert a header when the host changes.
 	sectionHeader := lipgloss.NewStyle().Bold(true).Foreground(secondaryColor)
 
-	if len(m.lines) > 0 {
+	if len(vLines) > 0 {
 		lastHost := "\x00" // sentinel so the first line always triggers a header
 		hasRemote := false
-		for _, line := range m.lines {
+		for _, line := range vLines {
 			if line.Host != "" {
 				hasRemote = true
 				break
 			}
 		}
-		for i, line := range m.lines {
+		for i, line := range vLines {
 			if hasRemote && line.Host != lastHost {
 				hostLabel := "Active (local)"
 				if line.Host != "" {
@@ -659,7 +810,7 @@ func (m sessionsModel) View() string {
 			} else if !hasRemote && i == 0 {
 				sections = append(sections, sectionHeader.Render("Active"))
 			}
-			row := m.renderActiveSessionRow(i, line, numberWidth)
+			row := m.renderSessionRowFiltered(i, line, numberWidth)
 			sections = append(sections, row)
 		}
 	} else if m.pendingExecutors > 0 {
@@ -676,11 +827,11 @@ func (m sessionsModel) View() string {
 	}
 
 	// Recent history section
-	if len(m.historyEntries) > 0 {
+	if len(vHist) > 0 {
 		sections = append(sections, "") // spacing
 		sections = append(sections, sectionHeader.Render("Recent"))
-		for i, entry := range m.historyEntries {
-			globalIdx := len(m.lines) + i
+		for i, entry := range vHist {
+			globalIdx := len(vLines) + i
 			ago := sessionsTimeAgo(entry.LastUsedAt)
 
 			// Color the time-ago text by staleness
@@ -694,10 +845,10 @@ func (m sessionsModel) View() string {
 			dir := lipgloss.NewStyle().Foreground(dimColor).Render(entry.WorkingDirectory)
 			var row string
 			if globalIdx == m.selectedIndex {
-				formattedName := formatSessionName(entry.Name, selectedStyle)
+				formattedName := m.renderSessionNameWithHighlight(entry.Name, selectedStyle)
 				row = selectedStyle.Render("> ") + formattedName + "  " + meta + "  " + dir
 			} else {
-				formattedName := formatSessionName(entry.Name, lipgloss.NewStyle())
+				formattedName := m.renderSessionNameWithHighlight(entry.Name, lipgloss.NewStyle())
 				row = "  " + formattedName + "  " + meta + "  " + dir
 			}
 			sections = append(sections, row)
@@ -833,6 +984,90 @@ func (m sessionsModel) staleSessionCount() int {
 	return count
 }
 
+// applySessionsSearch filters lines and historyEntries by fuzzy match on session name.
+func (m *sessionsModel) applySessionsSearch() {
+	if m.searchQuery == "" {
+		m.filteredLines = nil
+		m.filteredHist = nil
+		m.lineIndexMap = nil
+		m.histIndexMap = nil
+		return
+	}
+
+	m.filteredLines = nil
+	m.lineIndexMap = nil
+	for i, line := range m.lines {
+		if fuzzyMatch(m.searchQuery, line.Name) {
+			m.filteredLines = append(m.filteredLines, line)
+			m.lineIndexMap = append(m.lineIndexMap, i)
+		}
+	}
+
+	m.filteredHist = nil
+	m.histIndexMap = nil
+	for i, entry := range m.historyEntries {
+		if fuzzyMatch(m.searchQuery, entry.Name) {
+			m.filteredHist = append(m.filteredHist, entry)
+			m.histIndexMap = append(m.histIndexMap, i)
+		}
+	}
+
+	m.clampSelection()
+}
+
+// clearSessionsSearch clears the search filter and restores the full list.
+func (m *sessionsModel) clearSessionsSearch() {
+	m.searchActive = false
+	m.searchManual = false
+	m.searchQuery = ""
+	m.filteredLines = nil
+	m.filteredHist = nil
+	m.lineIndexMap = nil
+	m.histIndexMap = nil
+	m.clampSelection()
+}
+
+// visibleLines returns the session lines to display (filtered or all).
+func (m sessionsModel) visibleLines() []tmux.SessionLine {
+	if m.searchActive && m.searchQuery != "" && m.filteredLines != nil {
+		return m.filteredLines
+	}
+	return m.lines
+}
+
+// visibleHistory returns the history entries to display (filtered or all).
+func (m sessionsModel) visibleHistory() []history.Entry {
+	if m.searchActive && m.searchQuery != "" && m.filteredHist != nil {
+		return m.filteredHist
+	}
+	return m.historyEntries
+}
+
+// visibleTotalItems returns the total selectable items in filtered view.
+func (m sessionsModel) visibleTotalItems() int {
+	return len(m.visibleLines()) + len(m.visibleHistory())
+}
+
+// resolveOriginalIndex maps a filtered selection index back to the original
+// m.lines/m.historyEntries index, returning the original line index and
+// whether it's a history item.
+func (m sessionsModel) resolveOriginalIndex(idx int) (int, bool) {
+	vLines := m.visibleLines()
+	if idx < len(vLines) {
+		if m.searchActive && m.searchQuery != "" && m.lineIndexMap != nil {
+			return m.lineIndexMap[idx], false
+		}
+		return idx, false
+	}
+	histIdx := idx - len(vLines)
+	if m.searchActive && m.searchQuery != "" && m.histIndexMap != nil {
+		if histIdx >= 0 && histIdx < len(m.histIndexMap) {
+			return m.histIndexMap[histIdx], true
+		}
+	}
+	return histIdx, true
+}
+
 // truncateToHeight trims rendered output to at most maxHeight lines,
 // ensuring the top (most important) content is always visible.
 func truncateToHeight(s string, maxHeight int) string {
@@ -931,6 +1166,127 @@ func (m sessionsModel) beadsLabel(sessionName string) string {
 		return beadsCountStyle.Render(label)
 	}
 	return lipgloss.NewStyle().Foreground(dimColor).Render(label)
+}
+
+// renderSessionRowFiltered renders a session row, using the visible index for selection
+// and highlighting fuzzy matches when searching.
+func (m sessionsModel) renderSessionRowFiltered(visibleIdx int, line tmux.SessionLine, numberWidth int) string {
+	// Use original index for number display (or filtered index + 1)
+	number := fmt.Sprintf("%*d.", numberWidth, visibleIdx+1)
+
+	tier := m.sessionStalenessTier(line.Activity)
+	var numberColor lipgloss.Color
+	if m.stalenessDisabled {
+		numberColor = dimColor
+	} else {
+		numberColor = stalenessColor(tier)
+	}
+
+	memSummary := m.memorySummary(line.Name)
+	bdLabel := m.beadsLabel(line.Name)
+
+	if visibleIdx == m.selectedIndex {
+		row := selectedStyle.Render("> ") +
+			lipgloss.NewStyle().Foreground(numberColor).Bold(true).Render(number) +
+			" " +
+			m.renderLineWithHighlight(line.Line, selectedStyle)
+		if bdLabel != "" {
+			row += "  " + bdLabel
+		}
+		if memSummary != "" {
+			row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
+		}
+		return row
+	}
+
+	row := "  " +
+		lipgloss.NewStyle().Foreground(numberColor).Render(number) +
+		" " +
+		m.renderLineWithHighlight(line.Line, lipgloss.NewStyle())
+	if bdLabel != "" {
+		row += "  " + bdLabel
+	}
+	if memSummary != "" {
+		row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
+	}
+	return row
+}
+
+// renderLineWithHighlight renders a session line, highlighting fuzzy match characters
+// in the session name portion.
+func (m sessionsModel) renderLineWithHighlight(line string, baseStyle lipgloss.Style) string {
+	if !m.searchActive || m.searchQuery == "" {
+		return formatSessionLine(line, baseStyle)
+	}
+	// The session line starts with the name followed by ":"
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) != 2 {
+		return formatSessionLine(line, baseStyle)
+	}
+	name := parts[0]
+	rest := ":" + parts[1]
+
+	highlightedName := renderFuzzyHighlightText(m.searchQuery, name, baseStyle)
+	return highlightedName + baseStyle.Render(rest)
+}
+
+// renderSessionNameWithHighlight renders a session name with fuzzy highlighting.
+func (m sessionsModel) renderSessionNameWithHighlight(name string, baseStyle lipgloss.Style) string {
+	if !m.searchActive || m.searchQuery == "" {
+		return formatSessionName(name, baseStyle)
+	}
+	return renderFuzzyHighlightText(m.searchQuery, name, baseStyle)
+}
+
+// renderFuzzyHighlightText highlights matched characters in text.
+func renderFuzzyHighlightText(query, text string, baseStyle lipgloss.Style) string {
+	indices := fuzzyMatchIndices(query, text)
+	if indices == nil {
+		return formatSessionName(text, baseStyle)
+	}
+
+	highlightStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("226")).
+		Bold(true).
+		Underline(true)
+
+	matchSet := map[int]bool{}
+	for _, idx := range indices {
+		matchSet[idx] = true
+	}
+
+	// Check for agent prefix to dim it
+	var prefix, rest string
+	prefixLen := 0
+	for _, p := range agentPrefixes {
+		if strings.HasPrefix(text, p) {
+			prefix = p
+			rest = strings.TrimPrefix(text, p)
+			prefixLen = len(p)
+			break
+		}
+	}
+	if prefix == "" {
+		rest = text
+	}
+
+	var result strings.Builder
+	for i, ch := range prefix {
+		if matchSet[i] {
+			result.WriteString(highlightStyle.Render(string(ch)))
+		} else {
+			result.WriteString(agentPrefixStyle.Render(string(ch)))
+		}
+	}
+	for i, ch := range rest {
+		absIdx := prefixLen + i
+		if matchSet[absIdx] {
+			result.WriteString(highlightStyle.Render(string(ch)))
+		} else {
+			result.WriteString(baseStyle.Render(string(ch)))
+		}
+	}
+	return result.String()
 }
 
 func (m sessionsModel) renderActiveSessionRow(index int, line tmux.SessionLine, numberWidth int) string {

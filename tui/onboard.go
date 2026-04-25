@@ -15,12 +15,12 @@ import (
 
 // OnboardResult contains the outcome of the onboard interaction.
 type OnboardResult struct {
-	Completed          bool
-	Agents             []config.AgentConfig
-	KeybindAdded       bool
-	KeybindError       string
-	BrowseBindAdded    bool   // prefix+S → atmux browse --popup
-	SessionsBindAdded  bool   // prefix+s → atmux sessions -p
+	Completed         bool
+	Agents            []config.AgentConfig
+	KeybindAdded      bool
+	KeybindError      string
+	BrowseBindAdded   bool // prefix+S → atmux browse --popup
+	SessionsBindAdded bool // prefix+s → atmux sessions -p
 }
 
 // RunOnboard runs the interactive onboard TUI.
@@ -45,11 +45,11 @@ func RunOnboard() (*OnboardResult, error) {
 }
 
 type agentChoice struct {
-	name     string
-	command  string
-	enabled  bool
-	yolo     bool
-	flags    string
+	name    string
+	command string
+	enabled bool
+	yolo    bool
+	flags   string
 }
 
 // keybindOption represents a single keybinding the user can toggle on/off.
@@ -118,7 +118,7 @@ func newOnboardModel() onboardModel {
 		step: 0,
 		agents: []agentChoice{
 			{name: "Claude", command: "claude", enabled: true, yolo: true},
-			{name: "Codex", command: "codex", enabled: true, yolo: true},
+			{name: "Codex", command: "codex", enabled: false, yolo: true},
 			{name: "Gemini CLI", command: "gemini", enabled: false, yolo: false},
 		},
 		keybindOptions: []keybindOption{browseOpt, sessionsOpt},

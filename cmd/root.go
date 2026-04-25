@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/porganisciak/agent-tmux/config"
@@ -11,8 +12,6 @@ import (
 	"github.com/porganisciak/agent-tmux/tui"
 	"github.com/spf13/cobra"
 )
-
-var resetDefaults bool
 
 var rootCmd = &cobra.Command{
 	Use:   "atmux",
@@ -25,11 +24,6 @@ It creates a session with an 'agents' window configured via:
 	RunE: runRoot,
 }
 
-func init() {
-	rootCmd.Flags().BoolVar(&resetDefaults, "reset-defaults", false,
-		"Reset default startup behavior to show landing page")
-}
-
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -37,49 +31,80 @@ func Execute() {
 }
 
 func runRoot(cmd *cobra.Command, args []string) error {
-	// Handle --reset-defaults flag
-	if resetDefaults {
-		if err := config.ResetSettings(); err != nil {
-			return fmt.Errorf("failed to reset settings: %w", err)
-		}
-		fmt.Println("Settings reset to show landing page by default")
-		return nil
-	}
-
 	// Get working directory
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	// Create session config to get session name
+	// Create session config to get session name for current directory
 	session := tmux.NewSession(workingDir)
 
-	// Check settings for default behavior
+	// Check settings — "resume" skips the TUI entirely
 	settings, _ := config.LoadSettings()
-	switch settings.DefaultAction {
-	case "resume":
+	if settings.DefaultAction == "resume" {
 		return runDirectAttach(session, workingDir)
-	case "sessions":
-		result, err := tui.RunSessionsList(tui.SessionsOptions{AltScreen: false})
-		if err != nil {
+	}
+
+	// Default: show sessions list with current-directory context
+	result, err := tui.RunSessionsList(tui.SessionsOptions{
+		AltScreen:      false,
+		CurrentSession: session.Name,
+		CurrentDir:     workingDir,
+	})
+	if err != nil {
+		return err
+	}
+	if result.SessionName == "" {
+		return nil
+	}
+
+	// When invoked inside a tmux popup, attaching/switching from this process
+	// would target the popup client. Instead, write the resolved target to a
+	// tmux global option; the parent (or a wrapper) can read it after the
+	// popup closes and switch the outer client.
+	if tmuxClientIsPopup() {
+		target := result.SessionName
+		if result.IsFromHistory {
+			session := tmux.NewSession(result.WorkingDir)
+			if !session.Exists() {
+				localConfigPath := filepath.Join(result.WorkingDir, config.DefaultConfigName)
+				cfg, _ := config.LoadConfig(localConfigPath)
+				if err := session.Create(cfg); err != nil {
+					return err
+				}
+				if cfg != nil {
+					session.ApplyConfig(cfg)
+				}
+				session.SelectDefault()
+			}
+			target = session.Name
+			saveHistory(filepath.Base(result.WorkingDir), result.WorkingDir, target, "", "")
+		} else {
+			if sessionPath := tmux.GetSessionPath(target); sessionPath != "" {
+				saveHistory(filepath.Base(sessionPath), sessionPath, target, "", "")
+			}
+		}
+		// Use the same handoff key as `atmux sessions` so wrappers can
+		// pick it up uniformly.
+		if err := exec.Command("tmux", "set-option", "-g", "@atmux-popup-target", target).Run(); err != nil {
 			return err
 		}
-		if result.SessionName == "" {
-			return nil
-		}
-		if result.IsFromHistory {
-			// Revival from history
-			histSession := tmux.NewSession(result.WorkingDir)
-			return runDirectAttach(histSession, result.WorkingDir)
-		}
-		if sessionPath := tmux.GetSessionPath(result.SessionName); sessionPath != "" {
-			saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName, "", "")
-		}
-		return tmux.AttachToSession(result.SessionName)
-	default: // "landing" or empty
-		return runLandingPage(session, workingDir)
+		// Also switch directly. If the user invoked us via run-shell from a
+		// keybind (no parent atmux process to do the handoff), this gets the
+		// outer client to the right place; if a parent is waiting, the
+		// duplicate switch is a no-op.
+		return exec.Command("tmux", "switch-client", "-t", target).Run()
 	}
+
+	if result.IsFromHistory {
+		histSession := tmux.NewSession(result.WorkingDir)
+		return runDirectAttach(histSession, result.WorkingDir)
+	}
+	if sessionPath := tmux.GetSessionPath(result.SessionName); sessionPath != "" {
+		saveHistory(filepath.Base(sessionPath), sessionPath, result.SessionName, "", "")
+	}
+	return tmux.AttachToSession(result.SessionName)
 }
 
 // runDirectAttach performs the original behavior: create/attach directly
@@ -130,34 +155,5 @@ func saveHistory(name, workingDir, sessionName, host, attachMethod string) {
 
 	if err := store.SaveEntry(name, workingDir, sessionName, host, attachMethod); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save history: %v\n", err)
-	}
-}
-
-// runLandingPage shows the interactive landing page
-func runLandingPage(session *tmux.Session, workingDir string) error {
-	result, err := tui.RunLanding(tui.LandingOptions{
-		SessionName: session.Name,
-		AltScreen:   false,
-	})
-	if err != nil {
-		return err
-	}
-
-	switch result.Action {
-	case "resume":
-		return runDirectAttach(session, workingDir)
-	case "attach":
-		// Save to history before attaching to another session
-		if sessionPath := tmux.GetSessionPath(result.Target); sessionPath != "" {
-			saveHistory(filepath.Base(sessionPath), sessionPath, result.Target, "", "")
-		}
-		return tmux.AttachToSession(result.Target)
-	case "revive":
-		// Revival from history - create session in the saved working directory
-		histSession := tmux.NewSession(result.WorkingDir)
-		return runDirectAttach(histSession, result.WorkingDir)
-	default:
-		// User quit without action
-		return nil
 	}
 }
