@@ -494,14 +494,7 @@ func (m LiveModel) renderBeadsPanel(height int) string {
 		lines = append(lines, lipgloss.NewStyle().Foreground(dimColor).Render("  no open beads issues"))
 	} else {
 		for _, issue := range m.currentBeads.Issues {
-			state := "blocked"
-			lineStyle := lipgloss.NewStyle().Foreground(dimColor)
-			if issue.Ready {
-				state = "ready"
-				lineStyle = lipgloss.NewStyle().Foreground(activeColor)
-			}
-			plain := truncatePlainLine(fmt.Sprintf("  P%d %-7s %s %s", issue.Priority, state, issue.ID, issue.Title), m.width)
-			lines = append(lines, lineStyle.Render(plain))
+			lines = append(lines, m.renderBeadsIssueLines(issue)...)
 			if len(lines) >= height {
 				break
 			}
@@ -511,6 +504,28 @@ func (m LiveModel) renderBeadsPanel(height int) string {
 		lines = append(lines, "")
 	}
 	return strings.Join(lines[:height], "\n")
+}
+
+func (m LiveModel) renderBeadsIssueLines(issue liveBeadsIssue) []string {
+	state := "blocked"
+	lineStyle := lipgloss.NewStyle().Foreground(dimColor)
+	if issue.Ready {
+		state = "ready"
+		lineStyle = lipgloss.NewStyle().Foreground(activeColor)
+	}
+	meta := truncatePlainLine(fmt.Sprintf("  P%d %-7s %s", issue.Priority, state, issue.ID), m.width)
+	titleWidth := m.width - 4
+	if titleWidth < 1 {
+		titleWidth = m.width
+	}
+	title := truncatePlainLine(issue.Title, titleWidth)
+	if m.width >= 4 {
+		title = "    " + title
+	}
+	return []string{
+		lineStyle.Render(meta),
+		lipgloss.NewStyle().Foreground(dimColor).Render(title),
+	}
 }
 
 func truncatePlainLine(line string, width int) string {

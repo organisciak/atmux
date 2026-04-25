@@ -60,3 +60,32 @@ func TestWrapStatusPartsKeepsEveryShortcut(t *testing.T) {
 		t.Fatalf("expected wrapped output, got %v", lines)
 	}
 }
+
+func TestRenderBeadsIssueLinesSplitsMetadataAndTitle(t *testing.T) {
+	model := LiveModel{width: 28}
+	issue := liveBeadsIssue{
+		ID:       "atmux-lhh",
+		Title:    "Add --detach flag to skip TTY attachment",
+		Priority: 1,
+		Ready:    true,
+	}
+
+	lines := model.renderBeadsIssueLines(issue)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	meta := lipgloss.NewStyle().Render(lines[0])
+	title := lipgloss.NewStyle().Render(lines[1])
+	if !strings.Contains(meta, "P1") || !strings.Contains(meta, "ready") || !strings.Contains(meta, "atmux-lhh") {
+		t.Fatalf("metadata line missing fields: %q", meta)
+	}
+	if !strings.HasPrefix(title, "    ") {
+		t.Fatalf("expected indented title line, got %q", title)
+	}
+	if strings.Contains(meta, "detach") {
+		t.Fatalf("metadata line should not include title: %q", meta)
+	}
+	if lipgloss.Width(title) > model.width {
+		t.Fatalf("title line width %d exceeds model width %d", lipgloss.Width(title), model.width)
+	}
+}
