@@ -34,6 +34,43 @@ func buildExecutors(remoteFlag string) ([]tmux.TmuxExecutor, error) {
 	return executors, nil
 }
 
+// executorForHostLabel resolves a host label recorded in history — which is an
+// alias such as "devbox", not necessarily a hostname — into an executor.
+//
+// Resolving against config matters for more than cosmetics: using the alias as
+// the SSH target fails outright whenever the two differ, and it would also key
+// a second control socket for a host the session list already has open.
+// Configured values win, with the recorded attach method filling any gap.
+func executorForHostLabel(label, attachMethod string) (tmux.TmuxExecutor, error) {
+	cfg, err := loadRemoteConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	hosts, err := config.ResolveRemoteHosts(cfg, label, false)
+	if err != nil {
+		return nil, err
+	}
+
+	// ResolveRemoteHosts falls back to treating an unknown token as a hostname,
+	// so an empty result only happens for an empty label.
+	if len(hosts) == 0 {
+		return nil, fmt.Errorf("no remote host configured for %q", label)
+	}
+
+	rh := hosts[0]
+	if attachMethod != "" && rh.AttachMethod == defaultRemoteAttachMethodName {
+		// Config left the default in place; honour what history recorded.
+		rh.AttachMethod = attachMethod
+	}
+
+	return tmux.NewRemoteExecutor(rh.Host, rh.Port, rh.AttachMethod, rh.Alias), nil
+}
+
+// defaultRemoteAttachMethodName mirrors the config package's default so we can
+// tell "user chose ssh" from "nothing was configured".
+const defaultRemoteAttachMethodName = "ssh"
+
 // loadRemoteConfig loads remote host config from global and local configs.
 func loadRemoteConfig() (*config.Config, error) {
 	localPath := filepath.Join(".", config.DefaultConfigName)

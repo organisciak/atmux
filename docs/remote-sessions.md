@@ -120,6 +120,20 @@ life of the process.
 Beads counts cost a shell-out per session on the remote, so `--no-beads` is
 passed through to the remote host rather than being filtered locally.
 
+## Which commands are host-aware
+
+| Command | Remote support |
+| ------- | -------------- |
+| `sessions` | Local plus every configured host, always. |
+| `browse` | Multi-host, but only with an explicit `--remote`. |
+| `send` / `rc` | Broadcast to hosts named by `--remote`. |
+| `recents` | Revives remote sessions on their original host, resolving the recorded alias against config. |
+| `remote list` / `remote disconnect` | Manage saved hosts and their connections. |
+| `live` | Local only. It is built around local paths — beads counts, file watching, pane previews — so remote support would be a feature, not plumbing. |
+
+`atmux landing` is deprecated and delegates to `sessions`, so it inherits its
+host awareness.
+
 ## Interactive attach mode
 
 `RemoteExecutor.Interactive(...)` supports:

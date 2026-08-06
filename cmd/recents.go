@@ -69,11 +69,16 @@ func runRecents(cmd *cobra.Command, args []string) error {
 		return nil // User quit without selection
 	}
 
-	// Remote session revival - reattach via the appropriate executor
+	// Remote session revival - reattach via the appropriate executor. The host
+	// recorded in history is an alias, so it has to be resolved against config
+	// rather than used directly as an SSH target.
 	if result.Host != "" {
-		executor := tmux.NewRemoteExecutor(result.Host, 0, result.AttachMethod, result.Host)
+		executor, err := executorForHostLabel(result.Host, result.AttachMethod)
+		if err != nil {
+			return fmt.Errorf("failed to resolve remote host %q: %w", result.Host, err)
+		}
 		defer executor.Close()
-		return tmux.AttachToSessionWithExecutor(result.SessionName, executor)
+		return tmux.AttachToSessionWithStrategy(result.SessionName, executor, resolveAttachStrategy(executor))
 	}
 
 	// Local session revival - create new session in that directory
