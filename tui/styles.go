@@ -314,33 +314,105 @@ func getNodeIcon(nodeType string, expanded, active bool) string {
 // agentPrefixes are the session name prefixes used by atmux
 var agentPrefixes = []string{"agent-", "atmux-"}
 
+// nameStyleForColor returns the lipgloss style used to tint the session name
+// (the part after the agent-/atmux- prefix). When color is non-empty it
+// becomes the background tint with a contrasting foreground; otherwise the
+// returned style inherits from baseStyle so callers can fall back to the
+// caller's own intent.
+func nameStyleForColor(color string, baseStyle lipgloss.Style) lipgloss.Style {
+	if strings.TrimSpace(color) == "" {
+		return baseStyle
+	}
+	fg := lipgloss.Color("231") // bright white
+	if isHexColor(color) {
+		if perceptualLuminance(color) > 140 {
+			fg = lipgloss.Color("232") // near-black
+		}
+	}
+	return lipgloss.NewStyle().
+		Background(lipgloss.Color(color)).
+		Foreground(fg).
+		Bold(true)
+}
+
+func isHexColor(s string) bool {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "#") || len(s) != 7 {
+		return false
+	}
+	for _, c := range s[1:] {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// perceptualLuminance returns the Rec. 709 luminance for a "#rrggbb" hex
+// color, on a 0..255 scale. Caller must have verified isHexColor first.
+func perceptualLuminance(hex string) float64 {
+	parseHex := func(s string) float64 {
+		v := 0
+		for _, c := range s {
+			v <<= 4
+			switch {
+			case c >= '0' && c <= '9':
+				v |= int(c - '0')
+			case c >= 'a' && c <= 'f':
+				v |= int(c-'a') + 10
+			case c >= 'A' && c <= 'F':
+				v |= int(c-'A') + 10
+			}
+		}
+		return float64(v)
+	}
+	r := parseHex(hex[1:3])
+	g := parseHex(hex[3:5])
+	b := parseHex(hex[5:7])
+	return 0.2126*r + 0.7152*g + 0.0722*b
+}
+
 // formatSessionName formats a session name with a dimmed agent-/atmux- prefix.
 // If the name doesn't have a known prefix, it returns the name unstyled.
 func formatSessionName(name string, nameStyle lipgloss.Style) string {
+	return formatSessionNameColored(name, nameStyle, "")
+}
+
+// formatSessionNameColored is like formatSessionName but tints the project
+// name (the part after the dimmed agent-/atmux- prefix) with the given color
+// as background. The eye lands on the project name, so that's where the
+// highlight belongs.
+func formatSessionNameColored(name string, nameStyle lipgloss.Style, color string) string {
 	for _, prefix := range agentPrefixes {
 		if strings.HasPrefix(name, prefix) {
 			dimmedPrefix := agentPrefixStyle.Render(prefix)
-			rest := nameStyle.Render(strings.TrimPrefix(name, prefix))
+			rest := nameStyleForColor(color, nameStyle).Render(strings.TrimPrefix(name, prefix))
 			return dimmedPrefix + rest
 		}
 	}
-	return nameStyle.Render(name)
+	return nameStyleForColor(color, nameStyle).Render(name)
 }
 
 // formatSessionLine formats a session line (from tmux list-sessions) with a dimmed prefix.
 // The line format is "sessionName: N windows ..." so we only dim the prefix in the name part.
 func formatSessionLine(line string, lineStyle lipgloss.Style) string {
+	return formatSessionLineColored(line, lineStyle, "")
+}
+
+// formatSessionLineColored is like formatSessionLine but tints the agent- /
+// atmux- prefix with the given project color as background (when non-empty).
+func formatSessionLineColored(line string, lineStyle lipgloss.Style, color string) string {
 	for _, prefix := range agentPrefixes {
 		if strings.HasPrefix(line, prefix) {
 			// Find where the session name ends (at the colon)
 			colonIdx := strings.Index(line, ":")
 			if colonIdx == -1 {
 				// No colon, treat whole line as name
-				return formatSessionName(line, lineStyle)
+				return formatSessionNameColored(line, lineStyle, color)
 			}
 			sessionName := line[:colonIdx]
 			rest := line[colonIdx:]
-			return formatSessionName(sessionName, lineStyle) + lineStyle.Render(rest)
+			return formatSessionNameColored(sessionName, lineStyle, color) + lineStyle.Render(rest)
 		}
 	}
 	return lineStyle.Render(line)

@@ -54,6 +54,7 @@ type Config struct {
 	RemoteHosts    []RemoteHostConfig    // Remote hosts for sessions list
 	RemoteProjects []RemoteProjectConfig // Reusable remote projects
 	URLs           []URLConfig           // Quick-link URLs for the project
+	Color          string                // tmux accent color (hex, named, or colour###)
 }
 
 const (
@@ -253,6 +254,7 @@ func mergeConfigs(global, local *Config) *Config {
 		result.RemoteHosts = append(result.RemoteHosts, global.RemoteHosts...)
 		result.RemoteProjects = append(result.RemoteProjects, global.RemoteProjects...)
 		result.URLs = append(result.URLs, global.URLs...)
+		result.Color = global.Color
 	}
 
 	// Override/add from local
@@ -267,6 +269,9 @@ func mergeConfigs(global, local *Config) *Config {
 		result.RemoteHosts = mergeRemoteHosts(result.RemoteHosts, local.RemoteHosts)
 		result.RemoteProjects = mergeRemoteProjects(result.RemoteProjects, local.RemoteProjects)
 		result.URLs = append(result.URLs, local.URLs...)
+		if local.Color != "" {
+			result.Color = local.Color
+		}
 	}
 
 	return result
@@ -434,6 +439,16 @@ func Parse(path string) (*Config, error) {
 			}
 			config.URLs = append(config.URLs, URLConfig{Label: label, URL: target})
 
+		case "color":
+			if value == "" {
+				continue
+			}
+			normalized, err := NormalizeColor(value)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: %w", path, lineNumber, err)
+			}
+			config.Color = normalized
+
 		case "remote_project_session":
 			if currentRemoteProject == nil {
 				return nil, fmt.Errorf("%s:%d: remote_project_session requires a preceding remote_project", path, lineNumber)
@@ -591,6 +606,14 @@ func DefaultTemplate() string {
 #   remote_project_host:... - Host/alias for the last remote_project
 #   remote_project_dir:.... - Remote working dir for the last remote_project
 #   remote_project_session: - Optional tmux session name for the last remote_project
+#   color:value      - Tint the tmux status bar (hex, named, or colour###)
+
+# ── Project Color ────────────────────────────────────────────────────
+# Tints the tmux status bar and active pane border so this project is
+# visually distinct from your other sessions (à la VS Code Peacock).
+# Manage with: atmux color <hex|named>  /  atmux color surprise  /  atmux color clear
+#
+# color:#42b883
 
 # ── Custom Agent Setup ───────────────────────────────────────────────
 # Override the default agent panes. When any agent: line is present,

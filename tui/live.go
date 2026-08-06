@@ -253,12 +253,12 @@ func (m LiveModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if node == nil {
 			return m, nil
 		}
-		if node.Type == "session" || node.Type == "window" {
+		if (node.Type == "session" || node.Type == "window") && !node.SinglePane {
 			m.toggleExpand()
 			return m, nil
 		}
-		// Pane selected: swap it in (if needed) and move tmux focus
-		// to the display slot so the user can interact with it.
+		// Pane (or single-pane session/window leaf) selected: swap it in
+		// (if needed) and move tmux focus to the display slot.
 		m.swapToSelected()
 		tmux.FocusPane(m.opts.RightPaneID)
 		return m, nil
@@ -780,6 +780,9 @@ func (m *LiveModel) toggleExpand() {
 	if node == nil {
 		return
 	}
+	if node.SinglePane {
+		return
+	}
 	if node.Type == "session" || node.Type == "window" {
 		key := nodeKey(node.Type, node.Target)
 		expanded := m.isExpanded(node.Type, node.Target)
@@ -813,31 +816,37 @@ func (m *LiveModel) rebuildFlatNodes() {
 
 		sessExpanded := m.isExpanded("session", sess.Name)
 		defaultTarget := tmux.FindDefaultPaneTarget(sess)
+		// Collapse session-with-one-window-with-one-pane into a session leaf.
+		sessSingle := len(sess.Windows) == 1 && len(sess.Windows[0].Panes) == 1
 		sessNode := &tmux.TreeNode{
-			Type:     "session",
-			Name:     sess.Name,
-			Target:   sess.Name,
-			Expanded: sessExpanded,
-			Level:    0,
-			Attached: sess.Attached,
+			Type:       "session",
+			Name:       sess.Name,
+			Target:     sess.Name,
+			Expanded:   sessExpanded,
+			Level:      0,
+			Attached:   sess.Attached,
+			SinglePane: sessSingle,
 		}
 		nodes = append(nodes, sessNode)
 
-		if sessExpanded {
+		if sessExpanded && !sessSingle {
 			for _, win := range sess.Windows {
 				winTarget := sess.Name + ":" + strconv.Itoa(win.Index)
 				winExpanded := m.isExpanded("window", winTarget)
+				// Collapse window-with-one-pane into a window leaf.
+				winSingle := len(win.Panes) == 1
 				winNode := &tmux.TreeNode{
-					Type:     "window",
-					Name:     win.Name,
-					Target:   winTarget,
-					Expanded: winExpanded,
-					Level:    1,
-					Active:   win.Active,
+					Type:       "window",
+					Name:       win.Name,
+					Target:     winTarget,
+					Expanded:   winExpanded,
+					Level:      1,
+					Active:     win.Active,
+					SinglePane: winSingle,
 				}
 				nodes = append(nodes, winNode)
 
-				if winExpanded {
+				if winExpanded && !winSingle {
 					for _, pane := range win.Panes {
 						paneNode := &tmux.TreeNode{
 							Type:    "pane",
@@ -1015,7 +1024,8 @@ func reviveRecentSession(workingDir string) (string, error) {
 		return session.Name, nil
 	}
 	cfg, _ := config.LoadConfig(filepath.Join(workingDir, config.DefaultConfigName))
-	if err := session.Create(cfg); err != nil {
+	cfg, firstRun, _ := tmux.FirstRunPrep(workingDir, cfg)
+	if err := session.Create(cfg, firstRun); err != nil {
 		return "", err
 	}
 	if cfg != nil {

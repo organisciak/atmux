@@ -21,10 +21,12 @@ type Session struct {
 
 // SessionLine mirrors a single line from `tmux list-sessions`.
 type SessionLine struct {
-	Name     string
-	Line     string
-	Host     string // Remote host label (empty for local)
-	Activity int64  // Unix timestamp of last activity (for sorting)
+	Name       string
+	Line       string
+	Host       string // Remote host label (empty for local)
+	Activity   int64  // Unix timestamp of last activity (for sorting)
+	WorkingDir string // session_path for local sessions (empty for remote)
+	Color      string // Project color from .agent-tmux.conf (empty if unset)
 }
 
 // NewSession creates a new session configuration based on the current directory
@@ -53,8 +55,11 @@ func DefaultAgents() []config.AgentConfig {
 	}
 }
 
-// Create creates a new tmux session with the agents window
-func (s *Session) Create(cfg *config.Config) error {
+// Create creates a new tmux session with the agents window.
+// When firstRun is true, any --continue / -c resume flags are stripped from
+// the agent commands so a brand-new project doesn't try to resume a
+// conversation that doesn't exist.
+func (s *Session) Create(cfg *config.Config, firstRun bool) error {
 	// Determine which agents to use
 	agents := DefaultAgents()
 	if cfg != nil && len(cfg.CoreAgents) > 0 {
@@ -68,13 +73,17 @@ func (s *Session) Create(cfg *config.Config) error {
 
 	// Set up agent panes
 	for i, agent := range agents {
+		cmdStr := agent.Command
+		if firstRun {
+			cmdStr = stripResumeFlags(cmdStr)
+		}
 		if i == 0 {
 			// First agent uses the initial pane
-			s.run("send-keys", "-t", s.Name+":agents.0", agent.Command, "C-m")
+			s.run("send-keys", "-t", s.Name+":agents.0", cmdStr, "C-m")
 		} else {
 			// Subsequent agents split horizontally
 			s.run("split-window", "-h", "-t", s.Name+":agents", "-c", s.WorkingDir)
-			s.run("send-keys", "-t", s.Name+":agents", agent.Command, "C-m")
+			s.run("send-keys", "-t", s.Name+":agents", cmdStr, "C-m")
 		}
 	}
 
@@ -84,8 +93,84 @@ func (s *Session) Create(cfg *config.Config) error {
 	return nil
 }
 
+// stripResumeFlags removes Claude resume flags (--continue, --resume) from an
+// agent command line. Tokens are split on whitespace, so flags embedded in
+// quoted strings are left alone. -c is intentionally NOT stripped because it
+// collides with too many other CLIs' "-c <command>" form.
+func stripResumeFlags(cmd string) string {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return cmd
+	}
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		switch f {
+		case "--continue", "--resume":
+			continue
+		}
+		out = append(out, f)
+	}
+	return strings.Join(out, " ")
+}
+
+// ApplyColor sets tmux session-level options to tint the status bar and
+// active pane border. Color must be normalized via config.NormalizeColor.
+// A no-op when color is empty.
+func (s *Session) ApplyColor(color string) error {
+	if strings.TrimSpace(color) == "" {
+		return nil
+	}
+	fg := config.ContrastingFg(color)
+	if err := s.run("set-option", "-t", s.Name, "status-style", fmt.Sprintf("bg=%s,fg=%s", color, fg)); err != nil {
+		return err
+	}
+	if err := s.run("set-option", "-t", s.Name, "pane-active-border-style", fmt.Sprintf("fg=%s", color)); err != nil {
+		return err
+	}
+	if err := s.run("set-option", "-t", s.Name, "window-status-current-style", fmt.Sprintf("fg=%s,bold", color)); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ClearColor removes the session-level color overrides so the session falls
+// back to the user's tmux defaults.
+func (s *Session) ClearColor() error {
+	s.run("set-option", "-t", s.Name, "-u", "status-style")
+	s.run("set-option", "-t", s.Name, "-u", "pane-active-border-style")
+	s.run("set-option", "-t", s.Name, "-u", "window-status-current-style")
+	return nil
+}
+
+// ApplyColorToSession is a free function so callers (e.g. the color CLI) can
+// re-tint an existing session without needing a working directory.
+func ApplyColorToSession(name, color string) error {
+	if name == "" {
+		return nil
+	}
+	s := &Session{Name: name}
+	return s.ApplyColor(color)
+}
+
+// ClearColorOnSession removes color overrides from a running session.
+func ClearColorOnSession(name string) error {
+	if name == "" {
+		return nil
+	}
+	s := &Session{Name: name}
+	return s.ClearColor()
+}
+
 // ApplyConfig applies project-specific configuration
 func (s *Session) ApplyConfig(cfg *config.Config) error {
+	// Apply project color before windows/panes so the status bar shows
+	// the right tint from the moment the session is first visible.
+	if cfg.Color != "" {
+		if err := s.ApplyColor(cfg.Color); err != nil {
+			return err
+		}
+	}
+
 	// Add panes to agents window
 	for _, pane := range cfg.AgentPanes {
 		splitFlag := "-h"
@@ -180,9 +265,9 @@ func ListSessions() ([]string, error) {
 }
 
 // sessionListFormat is the tmux format string used for list-sessions.
-// It prepends the activity timestamp (tab-separated) to a display line
-// that closely matches the default tmux output.
-const sessionListFormat = `#{session_activity}	#{session_name}: #{session_windows} windows (created #{t:session_created})#{?session_attached, (attached),}`
+// It prepends the activity timestamp and session path (tab-separated) to a
+// display line that closely matches the default tmux output.
+const sessionListFormat = `#{session_activity}	#{session_path}	#{session_name}: #{session_windows} windows (created #{t:session_created})#{?session_attached, (attached),}`
 
 // ListSessionsRaw returns tmux list-sessions output with parsed names,
 // sorted by most recently active first.
@@ -197,8 +282,34 @@ func ListSessionsRaw() ([]SessionLine, error) {
 	}
 
 	sessions := parseSessionLines(string(output))
+	populateLocalColors(sessions)
 	sortSessionsByActivity(sessions)
 	return sessions, nil
+}
+
+// populateLocalColors reads each session's project config (.agent-tmux.conf in
+// its working dir) and fills in SessionLine.Color when one is set. Remote
+// sessions (Host != "") are skipped because their working dir is on another
+// machine. Failures are silently ignored — no color is just "no tint".
+func populateLocalColors(sessions []SessionLine) {
+	cache := map[string]string{}
+	for i := range sessions {
+		if sessions[i].Host != "" || sessions[i].WorkingDir == "" {
+			continue
+		}
+		dir := sessions[i].WorkingDir
+		if cached, ok := cache[dir]; ok {
+			sessions[i].Color = cached
+			continue
+		}
+		cfg, err := config.LoadConfig(filepath.Join(dir, config.DefaultConfigName))
+		color := ""
+		if err == nil && cfg != nil {
+			color = cfg.Color
+		}
+		cache[dir] = color
+		sessions[i].Color = color
+	}
 }
 
 // parseSessionLines parses lines from the activity-prefixed format.
@@ -218,13 +329,21 @@ func parseSessionLine(line string) SessionLine {
 	trimmed := strings.TrimSpace(line)
 
 	var activity int64
+	var workingDir string
 	displayLine := trimmed
 
-	// Parse "activity\tdisplay_line" format
+	// Parse "activity\tsession_path\tdisplay_line" format. Older format strings
+	// only had "activity\tdisplay_line"; fall back gracefully.
 	if idx := strings.IndexByte(trimmed, '\t'); idx != -1 {
 		if ts, err := strconv.ParseInt(trimmed[:idx], 10, 64); err == nil {
 			activity = ts
-			displayLine = trimmed[idx+1:]
+			rest := trimmed[idx+1:]
+			if idx2 := strings.IndexByte(rest, '\t'); idx2 != -1 {
+				workingDir = rest[:idx2]
+				displayLine = rest[idx2+1:]
+			} else {
+				displayLine = rest
+			}
 		}
 	}
 
@@ -232,7 +351,7 @@ func parseSessionLine(line string) SessionLine {
 	if idx := strings.Index(displayLine, ":"); idx != -1 {
 		name = displayLine[:idx]
 	}
-	return SessionLine{Name: name, Line: displayLine, Activity: activity}
+	return SessionLine{Name: name, Line: displayLine, Activity: activity, WorkingDir: workingDir}
 }
 
 // sortSessionsByActivity sorts sessions by activity timestamp, most recent first.
@@ -263,6 +382,9 @@ func ListSessionsRawWithExecutor(exec TmuxExecutor) ([]SessionLine, error) {
 	host := exec.HostLabel()
 	for i := range sessions {
 		sessions[i].Host = host
+	}
+	if !exec.IsRemote() {
+		populateLocalColors(sessions)
 	}
 	sortSessionsByActivity(sessions)
 	return sessions, nil

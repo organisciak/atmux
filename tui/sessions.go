@@ -859,12 +859,13 @@ func (m sessionsModel) View() string {
 			}
 			meta := lipgloss.NewStyle().Foreground(metaColor).Render("(" + ago + ")")
 			dir := lipgloss.NewStyle().Foreground(dimColor).Render(entry.WorkingDirectory)
+			entryColor := loadEntryColor(entry.WorkingDirectory)
 			var row string
 			if globalIdx == m.selectedIndex {
-				formattedName := m.renderSessionNameWithHighlight(entry.Name, selectedStyle)
+				formattedName := m.renderSessionNameWithHighlight(entry.Name, selectedStyle, entryColor)
 				row = selectedStyle.Render("> ") + formattedName + "  " + meta + "  " + dir
 			} else {
-				formattedName := m.renderSessionNameWithHighlight(entry.Name, lipgloss.NewStyle())
+				formattedName := m.renderSessionNameWithHighlight(entry.Name, lipgloss.NewStyle(), entryColor)
 				row = "  " + formattedName + "  " + meta + "  " + dir
 			}
 			sections = append(sections, row)
@@ -1184,6 +1185,20 @@ func (m sessionsModel) beadsLabel(sessionName string) string {
 	return lipgloss.NewStyle().Foreground(dimColor).Render(label)
 }
 
+// loadEntryColor reads the project color from a working dir's
+// .agent-tmux.conf. Returns "" on any error or when no color is set. Used by
+// the Recent history section, where history entries don't carry a color.
+func loadEntryColor(workingDir string) string {
+	if workingDir == "" {
+		return ""
+	}
+	cfg, err := config.LoadConfig(filepath.Join(workingDir, config.DefaultConfigName))
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return cfg.Color
+}
+
 // renderSessionRowFiltered renders a session row, using the visible index for selection
 // and highlighting fuzzy matches when searching.
 func (m sessionsModel) renderSessionRowFiltered(visibleIdx int, line tmux.SessionLine, numberWidth int) string {
@@ -1205,7 +1220,7 @@ func (m sessionsModel) renderSessionRowFiltered(visibleIdx int, line tmux.Sessio
 		row := selectedStyle.Render("> ") +
 			lipgloss.NewStyle().Foreground(numberColor).Bold(true).Render(number) +
 			" " +
-			m.renderLineWithHighlight(line.Line, selectedStyle)
+			m.renderLineWithHighlight(line.Line, selectedStyle, line.Color)
 		if bdLabel != "" {
 			row += "  " + bdLabel
 		}
@@ -1218,7 +1233,7 @@ func (m sessionsModel) renderSessionRowFiltered(visibleIdx int, line tmux.Sessio
 	row := "  " +
 		lipgloss.NewStyle().Foreground(numberColor).Render(number) +
 		" " +
-		m.renderLineWithHighlight(line.Line, lipgloss.NewStyle())
+		m.renderLineWithHighlight(line.Line, lipgloss.NewStyle(), line.Color)
 	if bdLabel != "" {
 		row += "  " + bdLabel
 	}
@@ -1229,36 +1244,38 @@ func (m sessionsModel) renderSessionRowFiltered(visibleIdx int, line tmux.Sessio
 }
 
 // renderLineWithHighlight renders a session line, highlighting fuzzy match characters
-// in the session name portion.
-func (m sessionsModel) renderLineWithHighlight(line string, baseStyle lipgloss.Style) string {
+// in the session name portion. color tints the agent- prefix when non-empty.
+func (m sessionsModel) renderLineWithHighlight(line string, baseStyle lipgloss.Style, color string) string {
 	if !m.searchActive || m.searchQuery == "" {
-		return formatSessionLine(line, baseStyle)
+		return formatSessionLineColored(line, baseStyle, color)
 	}
 	// The session line starts with the name followed by ":"
 	parts := strings.SplitN(line, ":", 2)
 	if len(parts) != 2 {
-		return formatSessionLine(line, baseStyle)
+		return formatSessionLineColored(line, baseStyle, color)
 	}
 	name := parts[0]
 	rest := ":" + parts[1]
 
-	highlightedName := renderFuzzyHighlightText(m.searchQuery, name, baseStyle)
+	highlightedName := renderFuzzyHighlightText(m.searchQuery, name, baseStyle, color)
 	return highlightedName + baseStyle.Render(rest)
 }
 
 // renderSessionNameWithHighlight renders a session name with fuzzy highlighting.
-func (m sessionsModel) renderSessionNameWithHighlight(name string, baseStyle lipgloss.Style) string {
+// color tints the agent- prefix when non-empty.
+func (m sessionsModel) renderSessionNameWithHighlight(name string, baseStyle lipgloss.Style, color string) string {
 	if !m.searchActive || m.searchQuery == "" {
-		return formatSessionName(name, baseStyle)
+		return formatSessionNameColored(name, baseStyle, color)
 	}
-	return renderFuzzyHighlightText(m.searchQuery, name, baseStyle)
+	return renderFuzzyHighlightText(m.searchQuery, name, baseStyle, color)
 }
 
-// renderFuzzyHighlightText highlights matched characters in text.
-func renderFuzzyHighlightText(query, text string, baseStyle lipgloss.Style) string {
+// renderFuzzyHighlightText highlights matched characters in text. color tints
+// the agent- prefix when non-empty (matches override the tint).
+func renderFuzzyHighlightText(query, text string, baseStyle lipgloss.Style, color string) string {
 	indices := fuzzyMatchIndices(query, text)
 	if indices == nil {
-		return formatSessionName(text, baseStyle)
+		return formatSessionNameColored(text, baseStyle, color)
 	}
 
 	highlightStyle := lipgloss.NewStyle().
@@ -1271,7 +1288,7 @@ func renderFuzzyHighlightText(query, text string, baseStyle lipgloss.Style) stri
 		matchSet[idx] = true
 	}
 
-	// Check for agent prefix to dim it
+	// Check for agent prefix to dim/tint it
 	var prefix, rest string
 	prefixLen := 0
 	for _, p := range agentPrefixes {
@@ -1286,6 +1303,7 @@ func renderFuzzyHighlightText(query, text string, baseStyle lipgloss.Style) stri
 		rest = text
 	}
 
+	nameTint := nameStyleForColor(color, baseStyle)
 	var result strings.Builder
 	for i, ch := range prefix {
 		if matchSet[i] {
@@ -1299,7 +1317,7 @@ func renderFuzzyHighlightText(query, text string, baseStyle lipgloss.Style) stri
 		if matchSet[absIdx] {
 			result.WriteString(highlightStyle.Render(string(ch)))
 		} else {
-			result.WriteString(baseStyle.Render(string(ch)))
+			result.WriteString(nameTint.Render(string(ch)))
 		}
 	}
 	return result.String()
@@ -1323,7 +1341,7 @@ func (m sessionsModel) renderActiveSessionRow(index int, line tmux.SessionLine, 
 		row := selectedStyle.Render("> ") +
 			lipgloss.NewStyle().Foreground(numberColor).Bold(true).Render(number) +
 			" " +
-			formatSessionLine(line.Line, selectedStyle)
+			formatSessionLineColored(line.Line, selectedStyle, line.Color)
 		if bdLabel != "" {
 			row += "  " + bdLabel
 		}
@@ -1336,7 +1354,7 @@ func (m sessionsModel) renderActiveSessionRow(index int, line tmux.SessionLine, 
 	row := "  " +
 		lipgloss.NewStyle().Foreground(numberColor).Render(number) +
 		" " +
-		formatSessionLine(line.Line, lipgloss.NewStyle())
+		formatSessionLineColored(line.Line, lipgloss.NewStyle(), line.Color)
 	if bdLabel != "" {
 		row += "  " + bdLabel
 	}

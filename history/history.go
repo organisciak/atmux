@@ -289,3 +289,18 @@ func (s *Store) Count() (int, error) {
 	err := s.db.QueryRow("SELECT COUNT(*) FROM agent_history").Scan(&count)
 	return count, err
 }
+
+// HasEntryForWorkingDir reports whether any entry exists for the given
+// working directory (across all hosts and session names). Used to detect
+// whether an atmux session has ever been created for a project.
+func (s *Store) HasEntryForWorkingDir(workingDir string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM agent_history WHERE working_directory = ?",
+		workingDir,
+	).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}

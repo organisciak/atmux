@@ -213,7 +213,8 @@ func handlePopupSelection(result *tui.SessionsResult) error {
 		if !session.Exists() {
 			localConfigPath := filepath.Join(result.WorkingDir, config.DefaultConfigName)
 			cfg, _ := config.LoadConfig(localConfigPath)
-			if err := session.Create(cfg); err != nil {
+			cfg, firstRun, _ := tmux.FirstRunPrep(result.WorkingDir, cfg)
+			if err := session.Create(cfg, firstRun); err != nil {
 				return err
 			}
 			if cfg != nil {

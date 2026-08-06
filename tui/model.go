@@ -2,12 +2,14 @@ package tui
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/porganisciak/agent-tmux/config"
 	"github.com/porganisciak/agent-tmux/history"
 	"github.com/porganisciak/agent-tmux/tmux"
 )
@@ -856,8 +858,13 @@ func Run(opts Options) error {
 	if model.reviveDir != "" {
 		session := tmux.NewSession(model.reviveDir)
 		if !session.Exists() {
-			if err := session.Create(nil); err != nil {
+			cfg, _ := config.LoadConfig(filepath.Join(model.reviveDir, config.DefaultConfigName))
+			cfg, firstRun, _ := tmux.FirstRunPrep(model.reviveDir, cfg)
+			if err := session.Create(cfg, firstRun); err != nil {
 				return err
+			}
+			if cfg != nil {
+				_ = session.ApplyConfig(cfg)
 			}
 			session.SelectDefault()
 		}

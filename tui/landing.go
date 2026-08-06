@@ -903,7 +903,7 @@ func (m landingModel) renderSessionsSection() string {
 				lineStyle = lineStyle.Foreground(activeColor)
 			}
 
-			formattedLine := formatSessionLine(session.Line, lineStyle)
+			formattedLine := formatSessionLineColored(session.Line, lineStyle, session.Color)
 
 			// Color session number by staleness
 			var numColor lipgloss.Color

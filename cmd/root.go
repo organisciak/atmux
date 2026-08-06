@@ -70,7 +70,8 @@ func runRoot(cmd *cobra.Command, args []string) error {
 			if !session.Exists() {
 				localConfigPath := filepath.Join(result.WorkingDir, config.DefaultConfigName)
 				cfg, _ := config.LoadConfig(localConfigPath)
-				if err := session.Create(cfg); err != nil {
+				cfg, firstRun, _ := tmux.FirstRunPrep(result.WorkingDir, cfg)
+				if err := session.Create(cfg, firstRun); err != nil {
 					return err
 				}
 				if cfg != nil {
@@ -124,9 +125,13 @@ func runDirectAttach(session *tmux.Session, workingDir string) error {
 		cfg = nil
 	}
 
+	// First-run hardening: random color for never-seen projects, and strip
+	// resume flags so the agent starts fresh on the very first launch.
+	cfg, firstRun, _ := tmux.FirstRunPrep(workingDir, cfg)
+
 	// Create new session with agent config
 	fmt.Printf("Creating new session: %s\n", session.Name)
-	if err := session.Create(cfg); err != nil {
+	if err := session.Create(cfg, firstRun); err != nil {
 		return err
 	}
 

@@ -3,8 +3,31 @@ package tmux
 import (
 	"errors"
 	"os/exec"
+	"strings"
 	"testing"
 )
+
+func TestStripResumeFlags(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"claude", "claude"},
+		{"claude --continue", "claude"},
+		{"claude --dangerously-skip-permissions --continue", "claude --dangerously-skip-permissions"},
+		{"claude --continue --dangerously-skip-permissions", "claude --dangerously-skip-permissions"},
+		{"claude --resume", "claude"},
+		{"codex --full-auto", "codex --full-auto"},
+		// -c is intentionally left alone (collides with `bash -c "..."`).
+		{"bash -c 'echo hi'", "bash -c 'echo hi'"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := stripResumeFlags(tc.in); got != tc.want {
+			t.Errorf("stripResumeFlags(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
 
 func TestParseSessionLine(t *testing.T) {
 	line := "agent-foo: 2 windows (created Fri Jan 30 10:00:00 2026) [80x24]"
@@ -14,6 +37,24 @@ func TestParseSessionLine(t *testing.T) {
 	}
 	if parsed.Line != line {
 		t.Fatalf("expected line %q, got %q", line, parsed.Line)
+	}
+}
+
+func TestParseSessionLineWithPath(t *testing.T) {
+	// Format: activity\tsession_path\tdisplay_line
+	raw := "1735000000\t/Users/me/projects/foo\tagent-foo: 2 windows (created Fri Jan 30 10:00:00 2026)"
+	parsed := parseSessionLine(raw)
+	if parsed.Name != "agent-foo" {
+		t.Fatalf("expected name agent-foo, got %q", parsed.Name)
+	}
+	if parsed.WorkingDir != "/Users/me/projects/foo" {
+		t.Fatalf("expected working dir, got %q", parsed.WorkingDir)
+	}
+	if parsed.Activity != 1735000000 {
+		t.Fatalf("expected activity, got %d", parsed.Activity)
+	}
+	if !strings.Contains(parsed.Line, "agent-foo: 2 windows") {
+		t.Fatalf("expected display line preserved, got %q", parsed.Line)
 	}
 }
 

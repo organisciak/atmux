@@ -103,7 +103,7 @@ type recentsDeletedMsg struct {
 func (m recentsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case recentsLoadedMsg:
-		m.entries = msg.entries
+		m.entries = dedupeByPath(msg.entries)
 		m.lastError = msg.err
 		m.applyFilter()
 		m.clampSelection()
@@ -175,7 +175,17 @@ func (m recentsModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clampSelection()
 		return m, nil
 	case "enter":
+		// Commit the filter and act on the selection.
 		m.filterMode = false
+		return m.selectCurrent()
+	case "right", "down", "up", "tab":
+		// Commit the filter; resume list navigation. Down also advances one.
+		m.filterMode = false
+		if msg.String() == "down" && m.selectedIndex < len(m.filteredEntries)-1 {
+			m.selectedIndex++
+		} else if msg.String() == "up" && m.selectedIndex > 0 {
+			m.selectedIndex--
+		}
 		return m, nil
 	case "backspace":
 		if len(m.filterText) > 0 {
@@ -281,13 +291,39 @@ func removeEntry(entries []history.Entry, id int64) []history.Entry {
 	return entries
 }
 
+// dedupeByPath collapses entries that share a working directory + host,
+// keeping only the most-recently-used one. Input is expected to be sorted
+// by last_used_at DESC (as returned by LoadHistory).
+func dedupeByPath(entries []history.Entry) []history.Entry {
+	if len(entries) <= 1 {
+		return entries
+	}
+	seen := make(map[string]bool, len(entries))
+	out := entries[:0]
+	for _, e := range entries {
+		key := e.Host + "\x00" + e.WorkingDirectory
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, e)
+	}
+	return out
+}
+
 func (m recentsModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "Loading..."
 	}
 
 	title := lipgloss.NewStyle().Bold(true).Render("Recent Sessions")
-	subtitle := lipgloss.NewStyle().Foreground(dimColor).Render("Enter: revive  /: filter  x: remove  q: quit")
+	var subtitleText string
+	if m.filterMode {
+		subtitleText = "Type to filter  ↓/→ commit  Enter pick  Esc clear"
+	} else {
+		subtitleText = "Enter: revive  /: filter  x: remove  q: quit"
+	}
+	subtitle := lipgloss.NewStyle().Foreground(dimColor).Render(subtitleText)
 
 	var sections []string
 	sections = append(sections, title, subtitle, "")

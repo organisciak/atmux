@@ -42,16 +42,17 @@ type Tree struct {
 
 // TreeNode is used for the tree browser display
 type TreeNode struct {
-	Type     string // "session", "window", or "pane"
-	Name     string // Display name
-	Target   string // Tmux target (session:window.pane)
-	Expanded bool
-	Level    int
-	Active   bool
-	Default  bool   // Pane is the session's AtMux Live default display target
-	Attached bool   // For sessions
-	Host     string // Remote host label (empty for local)
-	Children []*TreeNode
+	Type       string // "session", "window", or "pane"
+	Name       string // Display name
+	Target     string // Tmux target (session:window.pane)
+	Expanded   bool
+	Level      int
+	Active     bool
+	Default    bool // Pane is the session's AtMux Live default display target
+	Attached   bool // For sessions
+	Host       string // Remote host label (empty for local)
+	SinglePane bool   // Session/window collapses to a single pane — render as leaf, no expand
+	Children   []*TreeNode
 }
 
 // FetchTree queries tmux and builds the complete tree

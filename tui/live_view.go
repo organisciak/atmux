@@ -240,15 +240,17 @@ func (m LiveModel) renderNode(node *tmux.TreeNode, selected bool) string {
 	var icon string
 	switch node.Type {
 	case "session":
-		expanded := m.isExpanded("session", node.Target)
-		if expanded {
+		if node.SinglePane {
+			icon = "● "
+		} else if m.isExpanded("session", node.Target) {
 			icon = "▾ "
 		} else {
 			icon = "▸ "
 		}
 	case "window":
-		expanded := m.isExpanded("window", node.Target)
-		if expanded {
+		if node.SinglePane {
+			icon = "● "
+		} else if m.isExpanded("window", node.Target) {
 			icon = "▾ "
 		} else {
 			icon = "▸ "
