@@ -22,6 +22,11 @@ type TmuxExecutor interface {
 	HostLabel() string
 	// IsRemote returns true if this executor targets a remote host.
 	IsRemote() bool
+	// HostState returns the last known reachability state for this host.
+	HostState() HostState
+	// ResetBackoff clears any retry delay so the next call reconnects
+	// immediately. An explicit user refresh should always be able to retry.
+	ResetBackoff()
 	// Close releases any resources (e.g., SSH ControlMaster sockets).
 	Close() error
 }
@@ -67,6 +72,15 @@ func (e *LocalExecutor) HostLabel() string {
 func (e *LocalExecutor) IsRemote() bool {
 	return false
 }
+
+// HostState reports the local host as always available; there is no connection
+// to lose.
+func (e *LocalExecutor) HostState() HostState {
+	return HostState{Status: HostOK}
+}
+
+// ResetBackoff is a no-op: the local host is never in backoff.
+func (e *LocalExecutor) ResetBackoff() {}
 
 func (e *LocalExecutor) Close() error {
 	return nil

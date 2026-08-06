@@ -197,6 +197,16 @@ func (m sessionsModel) Init() tea.Cmd {
 	)
 }
 
+// refreshAllSessions re-fetches every host, clearing retry backoff first so a
+// host that has come back up (VPN reconnected, machine woken) is retried
+// immediately instead of waiting out its backoff.
+func (m sessionsModel) refreshAllSessions() tea.Cmd {
+	for _, exec := range m.executors {
+		exec.ResetBackoff()
+	}
+	return m.fetchAllSessions()
+}
+
 // fetchAllSessions launches one async command per executor so that local
 // sessions appear immediately and remote hosts pop in when ready.
 func (m sessionsModel) fetchAllSessions() tea.Cmd {
@@ -391,7 +401,7 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lines = nil
 		m.pendingExecutors = len(m.executors)
 		return m, tea.Batch(
-			m.fetchAllSessions(),
+			m.refreshAllSessions(),
 			func() tea.Msg {
 				store, err := history.Open()
 				if err != nil {
@@ -410,7 +420,7 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lines = nil
 		m.pendingExecutors = len(m.executors)
 		return m, tea.Batch(
-			m.fetchAllSessions(),
+			m.refreshAllSessions(),
 			func() tea.Msg {
 				store, err := history.Open()
 				if err != nil {
@@ -507,6 +517,12 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchManual = true
 			m.searchQuery = ""
 			return m, nil
+		case "R", "ctrl+r":
+			// Re-poll every host. Remote hosts that failed earlier are retried
+			// immediately rather than waiting out their backoff.
+			m.lines = nil
+			m.pendingExecutors = len(m.executors)
+			return m, m.refreshAllSessions()
 		case "r", "n":
 			// Resume/create session for current directory
 			if m.currentDir != "" {

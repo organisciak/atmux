@@ -45,6 +45,9 @@ func (f *fakeExecutor) HostLabel() string { return f.host }
 func (f *fakeExecutor) IsRemote() bool    { return f.remote }
 func (f *fakeExecutor) Close() error      { return nil }
 
+func (f *fakeExecutor) HostState() HostState { return HostState{Status: HostOK} }
+func (f *fakeExecutor) ResetBackoff()        {}
+
 func TestFetchTreeWithExecutors_LocalOnly(t *testing.T) {
 	local := &fakeExecutor{
 		host:   "",

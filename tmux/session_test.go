@@ -82,6 +82,12 @@ func (s stubExecutor) IsRemote() bool {
 	return false
 }
 
+func (s stubExecutor) HostState() HostState {
+	return HostState{Status: HostOK}
+}
+
+func (s stubExecutor) ResetBackoff() {}
+
 func (s stubExecutor) Close() error {
 	return nil
 }

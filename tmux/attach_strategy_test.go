@@ -24,18 +24,20 @@ func TestShellQuoteJoin_WithSpaces(t *testing.T) {
 
 // mockExecutor records which methods were called for testing strategy routing.
 type mockExecutor struct {
-	isRemote        bool
+	isRemote          bool
 	interactiveCalled bool
 	interactiveArgs   []string
 }
 
-func (m *mockExecutor) Run(args ...string) error                            { return nil }
-func (m *mockExecutor) Output(args ...string) ([]byte, error)               { return nil, nil }
-func (m *mockExecutor) RunWithDir(dir string, args ...string) error         { return nil }
+func (m *mockExecutor) Run(args ...string) error                                  { return nil }
+func (m *mockExecutor) Output(args ...string) ([]byte, error)                     { return nil, nil }
+func (m *mockExecutor) RunWithDir(dir string, args ...string) error               { return nil }
 func (m *mockExecutor) RunGeneric(command string, args ...string) ([]byte, error) { return nil, nil }
-func (m *mockExecutor) HostLabel() string                                   { return "testhost" }
-func (m *mockExecutor) IsRemote() bool                                      { return m.isRemote }
-func (m *mockExecutor) Close() error                                        { return nil }
+func (m *mockExecutor) HostLabel() string                                         { return "testhost" }
+func (m *mockExecutor) IsRemote() bool                                            { return m.isRemote }
+func (m *mockExecutor) Close() error                                              { return nil }
+func (m *mockExecutor) HostState() HostState                                      { return HostState{Status: HostOK} }
+func (m *mockExecutor) ResetBackoff()                                             {}
 func (m *mockExecutor) Interactive(args ...string) error {
 	m.interactiveCalled = true
 	m.interactiveArgs = args

@@ -19,7 +19,31 @@ const (
 	// local socket, so it is fast when the master is alive and fails quickly
 	// when it is not.
 	controlCheckTimeout = 3 * time.Second
+
+	// connectTimeout bounds the TCP/handshake phase. A blackholed host (VPN
+	// down) would otherwise hang for the full command timeout.
+	connectTimeout = 5
+
+	// serverAliveInterval and serverAliveCountMax make a master whose
+	// connection has silently died tear itself down. `ssh -O check` only asks
+	// the local master process whether it is running, so without these a dead
+	// master reports healthy and every command through it hangs.
+	serverAliveInterval = 15
+	serverAliveCountMax = 3
+
+	// aliveCheckInterval bounds how often the local `-O check` runs.
+	aliveCheckInterval = 5 * time.Second
 )
+
+// connectionOpts are the SSH options shared by the control master and every
+// command that rides it.
+func connectionOpts() []string {
+	return []string{
+		"-o", "ConnectTimeout=" + strconv.Itoa(connectTimeout),
+		"-o", "ServerAliveInterval=" + strconv.Itoa(serverAliveInterval),
+		"-o", "ServerAliveCountMax=" + strconv.Itoa(serverAliveCountMax),
+	}
+}
 
 // RemoteExecutor runs tmux commands on a remote host via SSH.
 // It uses SSH ControlMaster for connection pooling.
@@ -30,9 +54,11 @@ type RemoteExecutor struct {
 	Alias          string // Display alias (e.g., "devbox")
 	AttachStrategy string // Per-host override: "auto", "replace", or "new-window" (empty = use global)
 
-	controlPath string    // ControlMaster socket path (stable across processes)
-	controlOnce sync.Once // Ensures ControlMaster is resolved at most once per process
-	controlErr  error     // Error from ControlMaster setup
+	mu           sync.Mutex
+	controlPath  string    // ControlMaster socket path (stable across processes)
+	state        HostState // Last known reachability
+	backoff      time.Duration
+	lastVerified time.Time // When the control master was last confirmed alive
 }
 
 // NewRemoteExecutor creates a new RemoteExecutor for the given host.
@@ -59,33 +85,104 @@ func NewRemoteExecutor(host string, port int, attachMethod, alias string) *Remot
 // stable across processes, so a master opened by an earlier atmux invocation is
 // reused here without a new SSH handshake.
 func (e *RemoteExecutor) ensureControlMaster() error {
-	e.controlOnce.Do(func() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// A host in backoff fails immediately rather than burning the dial timeout
+	// again. Without this, one host behind a downed VPN costs every refresh a
+	// full ConnectTimeout.
+	if e.state.InBackoff() {
+		return e.state.Err
+	}
+
+	// Re-checking the master on every tmux call would add a subprocess per
+	// command, and a tree fetch issues several per session.
+	if e.state.Status == HostOK && time.Since(e.lastVerified) < aliveCheckInterval {
+		return nil
+	}
+
+	if e.controlPath == "" {
 		path, err := controlSocketPath(e.Host, e.Port)
 		if err != nil {
-			e.controlErr = err
-			return
+			e.recordFailureLocked(HostUnreachable, err)
+			return err
 		}
 		e.controlPath = path
+	}
 
-		// Reusing a live master is the entire point of the stable path.
-		if e.controlMasterAlive() {
-			return
-		}
+	// Reusing a live master is the entire point of the stable path.
+	if controlMasterAlive(e.controlPath, e.Host, e.Port) {
+		e.markVerifiedLocked()
+		return nil
+	}
 
-		// A socket file that fails `-O check` is stale: the remote rebooted or
-		// the master was killed. SSH will not clear it on its own, and leaving
-		// it in place makes every later connection fail.
-		removeStaleSocket(e.controlPath)
+	// A socket file that fails `-O check` is stale: the remote rebooted or the
+	// master was killed. SSH will not clear it on its own, and leaving it in
+	// place makes every later connection fail.
+	removeStaleSocket(e.controlPath)
 
-		e.controlErr = e.startControlMaster()
-	})
-	return e.controlErr
+	if err := e.startControlMaster(); err != nil {
+		e.recordFailureLocked(HostUnreachable, err)
+		return err
+	}
+	e.markVerifiedLocked()
+	return nil
 }
 
-// controlMasterAlive reports whether a usable ControlMaster is already
-// listening on this host's socket.
-func (e *RemoteExecutor) controlMasterAlive() bool {
-	return controlMasterAlive(e.controlPath, e.Host, e.Port)
+// markVerifiedLocked records that the control master is confirmed alive.
+// Callers must hold e.mu.
+func (e *RemoteExecutor) markVerifiedLocked() {
+	now := time.Now()
+	e.lastVerified = now
+	e.state = HostState{Status: HostOK, LastOK: now}
+	e.backoff = 0
+}
+
+// recordFailureLocked stores a failure and schedules the next retry.
+// Callers must hold e.mu.
+func (e *RemoteExecutor) recordFailureLocked(status HostStatus, err error) {
+	e.backoff = nextBackoff(e.backoff)
+	e.state = HostState{
+		Status:  status,
+		Err:     err,
+		LastOK:  e.state.LastOK, // Preserve when the host last worked.
+		RetryAt: time.Now().Add(e.backoff),
+	}
+	e.lastVerified = time.Time{}
+}
+
+// recordOutcome classifies the result of a remote command and updates state.
+// This is what distinguishes a host that is unreachable from one that answers
+// fine but has no tmux installed.
+func (e *RemoteExecutor) recordOutcome(err error, notFoundStatus HostStatus) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	status := classifyExecError(err)
+	if status == HostTmuxMissing {
+		status = notFoundStatus
+	}
+	if status != HostOK {
+		e.recordFailureLocked(status, err)
+		return
+	}
+	e.markVerifiedLocked()
+}
+
+// HostState returns the last known reachability state for this host.
+func (e *RemoteExecutor) HostState() HostState {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.state
+}
+
+// ResetBackoff clears any retry delay so the next call reconnects immediately.
+// An explicit user refresh should always be allowed to retry.
+func (e *RemoteExecutor) ResetBackoff() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.state.RetryAt = time.Time{}
+	e.backoff = 0
 }
 
 // controlMasterAlive reports whether a live ControlMaster is listening on path.
@@ -119,9 +216,9 @@ func (e *RemoteExecutor) startControlMaster() error {
 		"-o", "ControlPath=" + e.controlPath,
 		"-o", "ControlPersist=" + controlPersist(),
 		"-o", "StrictHostKeyChecking=accept-new",
-		"-p", strconv.Itoa(e.Port),
-		e.Host,
 	}
+	args = append(args, connectionOpts()...)
+	args = append(args, "-p", strconv.Itoa(e.Port), e.Host)
 
 	out, err := exec.CommandContext(ctx, "ssh", args...).CombinedOutput()
 	if err == nil {
@@ -130,7 +227,7 @@ func (e *RemoteExecutor) startControlMaster() error {
 
 	// Another atmux process may have won the race and created the master
 	// between our check and our start; that is a success, not a failure.
-	if e.controlMasterAlive() {
+	if controlMasterAlive(e.controlPath, e.Host, e.Port) {
 		return nil
 	}
 
@@ -154,10 +251,15 @@ func (e *RemoteExecutor) sshArgs() []string {
 		"-o", "ControlMaster=auto",
 		"-o", "ControlPersist=" + controlPersist(),
 		"-o", "StrictHostKeyChecking=accept-new",
-		"-p", strconv.Itoa(e.Port),
 	}
-	if e.controlPath != "" {
-		args = append(args, "-o", "ControlPath="+e.controlPath)
+	args = append(args, connectionOpts()...)
+	args = append(args, "-p", strconv.Itoa(e.Port))
+
+	e.mu.Lock()
+	path := e.controlPath
+	e.mu.Unlock()
+	if path != "" {
+		args = append(args, "-o", "ControlPath="+path)
 	}
 	return args
 }
@@ -180,21 +282,11 @@ func remoteCommand(command string, args []string) string {
 	return strings.Join(parts, " ")
 }
 
-func (e *RemoteExecutor) Run(args ...string) error {
-	if err := e.ensureControlMaster(); err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), defaultSSHTimeout)
-	defer cancel()
-
-	sshArgs := e.sshArgs()
-	sshArgs = append(sshArgs, e.Host, remoteCommand("tmux", args))
-
-	return exec.CommandContext(ctx, "ssh", sshArgs...).Run()
-}
-
-func (e *RemoteExecutor) Output(args ...string) ([]byte, error) {
+// runRemote executes a command string over SSH and records what the outcome
+// says about the host's reachability. notFoundStatus is the status to record
+// when the remote reports the command is missing: a missing tmux makes the host
+// unusable, but a missing probe binary says nothing about the host's health.
+func (e *RemoteExecutor) runRemote(command string, notFoundStatus HostStatus) ([]byte, error) {
 	if err := e.ensureControlMaster(); err != nil {
 		return nil, err
 	}
@@ -203,9 +295,20 @@ func (e *RemoteExecutor) Output(args ...string) ([]byte, error) {
 	defer cancel()
 
 	sshArgs := e.sshArgs()
-	sshArgs = append(sshArgs, e.Host, remoteCommand("tmux", args))
+	sshArgs = append(sshArgs, e.Host, command)
 
-	return exec.CommandContext(ctx, "ssh", sshArgs...).Output()
+	out, err := exec.CommandContext(ctx, "ssh", sshArgs...).Output()
+	e.recordOutcome(err, notFoundStatus)
+	return out, err
+}
+
+func (e *RemoteExecutor) Run(args ...string) error {
+	_, err := e.runRemote(remoteCommand("tmux", args), HostTmuxMissing)
+	return err
+}
+
+func (e *RemoteExecutor) Output(args ...string) ([]byte, error) {
+	return e.runRemote(remoteCommand("tmux", args), HostTmuxMissing)
 }
 
 func (e *RemoteExecutor) RunWithDir(dir string, args ...string) error {
@@ -296,17 +399,8 @@ func (e *RemoteExecutor) interactiveMosh(args ...string) error {
 }
 
 func (e *RemoteExecutor) RunGeneric(command string, args ...string) ([]byte, error) {
-	if err := e.ensureControlMaster(); err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), defaultSSHTimeout)
-	defer cancel()
-
-	sshArgs := e.sshArgs()
-	sshArgs = append(sshArgs, e.Host, remoteCommand(command, args))
-
-	return exec.CommandContext(ctx, "ssh", sshArgs...).Output()
+	// A missing probe binary is not a sign of an unhealthy host.
+	return e.runRemote(remoteCommand(command, args), HostOK)
 }
 
 // socketExists checks whether a Unix socket file exists at the given path.

@@ -156,9 +156,15 @@ func runSessionsNonInteractive(cmd *cobra.Command, executors []tmux.TmuxExecutor
 	for _, exec := range executors {
 		lines, err := tmux.ListSessionsRawWithExecutor(exec)
 		if err != nil {
-			// Skip unreachable hosts with a warning
+			// Report why the host failed rather than collapsing every failure
+			// into "unreachable": a host with no tmux installed is a different
+			// problem from one behind a downed VPN.
 			if exec.IsRemote() {
-				fmt.Fprintf(out, "# %s: unreachable\n", exec.HostLabel())
+				reason := exec.HostState().Reason()
+				if reason == "" {
+					reason = "unreachable"
+				}
+				fmt.Fprintf(out, "# %s: %s\n", exec.HostLabel(), reason)
 				continue
 			}
 			return err
