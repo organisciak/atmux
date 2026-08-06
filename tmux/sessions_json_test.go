@@ -1,16 +1,14 @@
-package cmd
+package tmux
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/porganisciak/agent-tmux/tmux"
 )
 
 func TestBuildSessionsPayload_NoSessionsEmitsEmptyArray(t *testing.T) {
-	payload := buildSessionsPayload(nil, time.Now(), false)
+	payload := BuildSessionsPayload(nil, "test", time.Now(), false)
 
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -25,7 +23,7 @@ func TestBuildSessionsPayload_NoSessionsEmitsEmptyArray(t *testing.T) {
 }
 
 func TestBuildSessionsPayload_CarriesSessionFields(t *testing.T) {
-	lines := []tmux.SessionLine{{
+	lines := []SessionLine{{
 		Name:       "agent-foo",
 		Line:       "agent-foo: 2 windows (created Fri Jan 30 10:00:00 2026) (attached)",
 		Activity:   1735000000,
@@ -34,7 +32,7 @@ func TestBuildSessionsPayload_CarriesSessionFields(t *testing.T) {
 		Attached:   true,
 	}}
 
-	payload := buildSessionsPayload(lines, time.Now(), false)
+	payload := BuildSessionsPayload(lines, "test", time.Now(), false)
 	if len(payload.Sessions) != 1 {
 		t.Fatalf("expected 1 session, got %d", len(payload.Sessions))
 	}
@@ -58,9 +56,9 @@ func TestBuildSessionsPayload_CarriesSessionFields(t *testing.T) {
 }
 
 func TestBuildSessionsPayload_OmitsBeadsWhenNotRequested(t *testing.T) {
-	lines := []tmux.SessionLine{{Name: "agent-foo", WorkingDir: t.TempDir()}}
+	lines := []SessionLine{{Name: "agent-foo", WorkingDir: t.TempDir()}}
 
-	payload := buildSessionsPayload(lines, time.Now(), false)
+	payload := BuildSessionsPayload(lines, "test", time.Now(), false)
 	if payload.Sessions[0].BeadsOpen != nil {
 		t.Fatal("beads must be skipped when not requested; counting is slow enough to matter over SSH")
 	}
@@ -69,9 +67,9 @@ func TestBuildSessionsPayload_OmitsBeadsWhenNotRequested(t *testing.T) {
 func TestBuildSessionsPayload_OmitsBeadsForNonBeadsProject(t *testing.T) {
 	// A directory with no .beads is not a beads project; that must stay
 	// distinguishable from a project with zero open issues.
-	lines := []tmux.SessionLine{{Name: "agent-foo", WorkingDir: t.TempDir()}}
+	lines := []SessionLine{{Name: "agent-foo", WorkingDir: t.TempDir()}}
 
-	payload := buildSessionsPayload(lines, time.Now(), true)
+	payload := BuildSessionsPayload(lines, "test", time.Now(), true)
 	if payload.Sessions[0].BeadsOpen != nil {
 		t.Fatalf("expected no beads count, got %d", *payload.Sessions[0].BeadsOpen)
 	}
@@ -79,13 +77,13 @@ func TestBuildSessionsPayload_OmitsBeadsForNonBeadsProject(t *testing.T) {
 
 func TestBuildSessionsPayload_StampsSchemaAndVersion(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	payload := buildSessionsPayload(nil, now, false)
+	payload := BuildSessionsPayload(nil, "v1.2.3", now, false)
 
 	if payload.SchemaVersion != SessionsSchemaVersion {
 		t.Errorf("schema version = %d, want %d", payload.SchemaVersion, SessionsSchemaVersion)
 	}
-	if payload.AtmuxVersion != Version {
-		t.Errorf("atmux version = %q, want %q", payload.AtmuxVersion, Version)
+	if payload.AtmuxVersion != "v1.2.3" {
+		t.Errorf("atmux version = %q, want %q", payload.AtmuxVersion, "v1.2.3")
 	}
 	if !payload.GeneratedAt.Equal(now) {
 		t.Errorf("generated_at = %v, want %v", payload.GeneratedAt, now)
@@ -146,20 +144,5 @@ func TestBuildSessionsPayload_ZeroBeadsIsDistinctFromAbsent(t *testing.T) {
 	}
 	if strings.Contains(string(encodedNone), "beads_open") {
 		t.Fatalf("absent count must be omitted, got %s", encodedNone)
-	}
-}
-
-func TestRunSessionsJSON_WritesOnlyJSON(t *testing.T) {
-	var out strings.Builder
-	if err := runSessionsJSON(&out, false); err != nil {
-		t.Skipf("no local tmux available: %v", err)
-	}
-
-	var payload SessionsPayload
-	if err := json.Unmarshal([]byte(out.String()), &payload); err != nil {
-		t.Fatalf("output was not valid JSON (%v):\n%s", err, out.String())
-	}
-	if payload.SchemaVersion != SessionsSchemaVersion {
-		t.Fatalf("schema version = %d", payload.SchemaVersion)
 	}
 }

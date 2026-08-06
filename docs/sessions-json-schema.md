@@ -65,3 +65,17 @@ back to plain `tmux list-sessions` over SSH rather than guessing.
 The payload is built from the same collection path the interactive session list
 uses (`tmux.ListSessionsRawWithExecutor` and `tmux.BeadsOpenCount`), so JSON
 output and the TUI cannot report different data for the same host.
+
+## How atmux consumes it
+
+`ListSessionsRawWithExecutor` asks a remote host for this payload before
+falling back to plain `tmux list-sessions`. The fetch doubles as the capability
+probe, so a host with atmux costs one round trip rather than a probe plus a
+fetch.
+
+If `atmux` is missing from the non-interactive PATH — SSH runs a non-login
+shell, which on many setups skips the profile that adds `~/bin` or Homebrew —
+the call is retried through `bash -lc`. A host where neither works falls back to
+plain tmux and simply shows less.
+
+See [Remote atmux sessions](./remote-sessions.md) for the surrounding flow.

@@ -24,9 +24,11 @@ func buildExecutors(remoteFlag string) ([]tmux.TmuxExecutor, error) {
 		return nil, err
 	}
 	for _, rh := range remoteHosts {
-		executors = append(executors, tmux.NewRemoteExecutor(
-			rh.Host, rh.Port, rh.AttachMethod, rh.Alias,
-		))
+		re := tmux.NewRemoteExecutor(rh.Host, rh.Port, rh.AttachMethod, rh.Alias)
+		// Beads counts cost a shell-out per session on the remote; do not make
+		// the host pay for them when they will not be shown.
+		re.SkipBeads = sessionsNoBeads
+		executors = append(executors, re)
 	}
 
 	return executors, nil

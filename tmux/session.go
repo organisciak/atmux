@@ -28,6 +28,10 @@ type SessionLine struct {
 	WorkingDir string // session_path for local sessions (empty for remote)
 	Color      string // Project color from .agent-tmux.conf (empty if unset)
 	Attached   bool   // Whether a client is currently attached
+	// Beads is the open beads issue count reported by a remote atmux. It is
+	// nil for local sessions, which the TUI counts asynchronously instead, and
+	// for directories that are not beads projects.
+	Beads *int
 }
 
 // NewSession creates a new session configuration based on the current directory
@@ -386,6 +390,15 @@ func KillSession(name string) error {
 // ListSessionsRawWithExecutor returns tmux list-sessions output using the given executor,
 // sorted by most recently active first.
 func ListSessionsRawWithExecutor(exec TmuxExecutor) ([]SessionLine, error) {
+	// A remote host running atmux can describe itself far better than
+	// `tmux list-sessions` can, so ask it first and fall back when it cannot.
+	if re, ok := exec.(*RemoteExecutor); ok {
+		if lines, ok := re.sessionsViaAtmux(); ok {
+			sortSessionsByActivity(lines)
+			return lines, nil
+		}
+	}
+
 	output, err := exec.Output("list-sessions", "-F", sessionListFormat)
 	if err != nil {
 		if isNoServerError(err) {

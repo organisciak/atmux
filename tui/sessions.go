@@ -1153,14 +1153,26 @@ func formatMemoryBytes(b int64) string {
 	}
 }
 
-func (m sessionsModel) beadsLabel(sessionName string) string {
+func (m sessionsModel) beadsLabel(line tmux.SessionLine) string {
 	if !m.showBeads {
 		return ""
 	}
-	count, ok := m.beadsCounts[sessionName]
-	if !ok || count == nil {
-		return ""
+
+	// Remote hosts report their own counts in the session payload; only local
+	// sessions go through the async map. Keying the map by name alone would
+	// also collide across hosts.
+	count := line.Beads
+	if count == nil {
+		if line.Host != "" {
+			return ""
+		}
+		local, ok := m.beadsCounts[line.Name]
+		if !ok || local == nil {
+			return ""
+		}
+		count = local
 	}
+
 	label := fmt.Sprintf("bd:%d", *count)
 	if *count > 0 {
 		return beadsCountStyle.Render(label)
@@ -1197,7 +1209,7 @@ func (m sessionsModel) renderSessionRowFiltered(visibleIdx int, line tmux.Sessio
 	}
 
 	memSummary := m.memorySummary(line.Name)
-	bdLabel := m.beadsLabel(line.Name)
+	bdLabel := m.beadsLabel(line)
 
 	if visibleIdx == m.selectedIndex {
 		row := selectedStyle.Render("> ") +
@@ -1309,7 +1321,7 @@ func renderFuzzyHighlightText(query, text string, baseStyle lipgloss.Style, colo
 func (m sessionsModel) renderActiveSessionRow(index int, line tmux.SessionLine, numberWidth int) string {
 	number := fmt.Sprintf("%*d.", numberWidth, index+1)
 	memSummary := m.memorySummary(line.Name)
-	bdLabel := m.beadsLabel(line.Name)
+	bdLabel := m.beadsLabel(line)
 
 	// Determine number color based on staleness
 	tier := m.sessionStalenessTier(line.Activity)

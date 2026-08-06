@@ -53,12 +53,14 @@ type RemoteExecutor struct {
 	AttachMethod   string // "ssh" or "mosh"
 	Alias          string // Display alias (e.g., "devbox")
 	AttachStrategy string // Per-host override: "auto", "replace", or "new-window" (empty = use global)
+	SkipBeads      bool   // Ask a remote atmux to skip beads counts (they cost a shell-out per session)
 
 	mu           sync.Mutex
 	controlPath  string    // ControlMaster socket path (stable across processes)
 	state        HostState // Last known reachability
 	backoff      time.Duration
 	lastVerified time.Time // When the control master was last confirmed alive
+	atmux        remoteAtmuxMode
 }
 
 // NewRemoteExecutor creates a new RemoteExecutor for the given host.
@@ -265,7 +267,7 @@ func (e *RemoteExecutor) sshArgs() []string {
 }
 
 // shellQuote wraps s in single quotes for safe passage through a remote shell.
-// Interior single quotes are escaped as '\'' (end-quote, literal quote, re-open).
+// Interior single quotes are escaped as '\” (end-quote, literal quote, re-open).
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
