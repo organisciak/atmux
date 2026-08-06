@@ -27,6 +27,7 @@ type SessionLine struct {
 	Activity   int64  // Unix timestamp of last activity (for sorting)
 	WorkingDir string // session_path for local sessions (empty for remote)
 	Color      string // Project color from .agent-tmux.conf (empty if unset)
+	Attached   bool   // Whether a client is currently attached
 }
 
 // NewSession creates a new session configuration based on the current directory
@@ -265,9 +266,11 @@ func ListSessions() ([]string, error) {
 }
 
 // sessionListFormat is the tmux format string used for list-sessions.
-// It prepends the activity timestamp and session path (tab-separated) to a
-// display line that closely matches the default tmux output.
-const sessionListFormat = `#{session_activity}	#{session_path}	#{session_name}: #{session_windows} windows (created #{t:session_created})#{?session_attached, (attached),}`
+// It prepends the activity timestamp, session path, and attached flag
+// (tab-separated) to a display line that closely matches the default tmux
+// output. New fields go in the prefix, never after the display line, which is
+// free-form and must stay last.
+const sessionListFormat = `#{session_activity}	#{session_path}	#{session_attached}	#{session_name}: #{session_windows} windows (created #{t:session_created})#{?session_attached, (attached),}`
 
 // ListSessionsRaw returns tmux list-sessions output with parsed names,
 // sorted by most recently active first.
@@ -330,19 +333,26 @@ func parseSessionLine(line string) SessionLine {
 
 	var activity int64
 	var workingDir string
+	var attached bool
 	displayLine := trimmed
 
-	// Parse "activity\tsession_path\tdisplay_line" format. Older format strings
-	// only had "activity\tdisplay_line"; fall back gracefully.
-	if idx := strings.IndexByte(trimmed, '\t'); idx != -1 {
-		if ts, err := strconv.ParseInt(trimmed[:idx], 10, 64); err == nil {
+	// The prefix has grown over time, so parse positionally by field count and
+	// fall back gracefully for output produced by an older format string:
+	//   display
+	//   activity, display
+	//   activity, path, display
+	//   activity, path, attached, display
+	// The display line is free-form and always last.
+	parts := strings.Split(trimmed, "\t")
+	if len(parts) > 1 {
+		if ts, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
 			activity = ts
-			rest := trimmed[idx+1:]
-			if idx2 := strings.IndexByte(rest, '\t'); idx2 != -1 {
-				workingDir = rest[:idx2]
-				displayLine = rest[idx2+1:]
-			} else {
-				displayLine = rest
+			displayLine = parts[len(parts)-1]
+			if len(parts) >= 3 {
+				workingDir = parts[1]
+			}
+			if len(parts) >= 4 {
+				attached = parts[2] == "1"
 			}
 		}
 	}
@@ -351,7 +361,13 @@ func parseSessionLine(line string) SessionLine {
 	if idx := strings.Index(displayLine, ":"); idx != -1 {
 		name = displayLine[:idx]
 	}
-	return SessionLine{Name: name, Line: displayLine, Activity: activity, WorkingDir: workingDir}
+	return SessionLine{
+		Name:       name,
+		Line:       displayLine,
+		Activity:   activity,
+		WorkingDir: workingDir,
+		Attached:   attached,
+	}
 }
 
 // sortSessionsByActivity sorts sessions by activity timestamp, most recent first.

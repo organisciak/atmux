@@ -26,6 +26,7 @@ var (
 	sessionsPopup          bool
 	sessionsNoPopup        bool
 	sessionsNonInteractive bool
+	sessionsJSON           bool
 	sessionsNoBeads        bool
 	sessionsNoStaleness    bool
 	sessionsRemote         string
@@ -38,6 +39,7 @@ func init() {
 	sessionsCmd.Flags().BoolVarP(&sessionsPopup, "popup", "p", false, "Force popup mode (even outside tmux conditions)")
 	sessionsCmd.Flags().BoolVar(&sessionsNoPopup, "no-popup", false, "Disable popup mode (default: popup when inside tmux)")
 	sessionsCmd.Flags().BoolVarP(&sessionsNonInteractive, "non-interactive", "n", false, "Print sessions and exit (no TUI)")
+	sessionsCmd.Flags().BoolVar(&sessionsJSON, "json", false, "Print local sessions as JSON and exit (machine-readable)")
 	sessionsCmd.Flags().BoolVar(&sessionsNoBeads, "no-beads", false, "Hide beads issue counts per session")
 	sessionsCmd.Flags().BoolVar(&sessionsNoStaleness, "no-staleness", false, "Disable staleness indicators and kill-stale")
 	sessionsCmd.Flags().StringVarP(&sessionsRemote, "remote", "r", "", "Remote host(s) or aliases to include (comma-separated)")
@@ -47,6 +49,12 @@ func init() {
 func runSessions(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		return attachToSession(args[0])
+	}
+
+	// JSON output is what a remote atmux reads over SSH, so it must emit
+	// nothing but the payload and must not build remote executors of its own.
+	if sessionsJSON {
+		return runSessionsJSON(cmd.OutOrStdout(), !sessionsNoBeads)
 	}
 
 	// Build executors (local + configured remotes + --remote flag)

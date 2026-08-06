@@ -1,10 +1,7 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -277,24 +274,10 @@ type beadsCountMsg struct {
 
 func fetchBeadsCount(sessionName string) tea.Cmd {
 	return func() tea.Msg {
-		path := tmux.GetSessionPath(sessionName)
-		if path == "" {
-			return beadsCountMsg{sessionName: sessionName, hasBeads: false}
-		}
-		if _, err := os.Stat(filepath.Join(path, ".beads")); err != nil {
-			return beadsCountMsg{sessionName: sessionName, hasBeads: false}
-		}
-		cmd := exec.Command("bd", "count", "--status=open", "--json")
-		cmd.Dir = path
-		output, err := cmd.Output()
-		if err != nil {
-			return beadsCountMsg{sessionName: sessionName, hasBeads: true, err: err}
-		}
-		var result struct {
-			Count int `json:"count"`
-		}
-		json.Unmarshal(output, &result)
-		return beadsCountMsg{sessionName: sessionName, count: result.Count, hasBeads: true}
+		// Shared with `atmux sessions --json` so the counts a remote host
+		// reports cannot drift from the ones shown locally.
+		count, ok := tmux.BeadsOpenCount(tmux.GetSessionPath(sessionName))
+		return beadsCountMsg{sessionName: sessionName, count: count, hasBeads: ok}
 	}
 }
 

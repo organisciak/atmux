@@ -132,3 +132,44 @@ func (s stubExecutor) ResetBackoff() {}
 func (s stubExecutor) Close() error {
 	return nil
 }
+
+func TestParseSessionLineWithAttachedFlag(t *testing.T) {
+	// Format: activity\tsession_path\tsession_attached\tdisplay_line
+	raw := "1735000000\t/Users/me/projects/foo\t1\tagent-foo: 2 windows (created Fri Jan 30 10:00:00 2026) (attached)"
+	parsed := parseSessionLine(raw)
+	if parsed.Name != "agent-foo" {
+		t.Fatalf("expected name agent-foo, got %q", parsed.Name)
+	}
+	if parsed.WorkingDir != "/Users/me/projects/foo" {
+		t.Fatalf("expected working dir, got %q", parsed.WorkingDir)
+	}
+	if !parsed.Attached {
+		t.Fatal("expected attached to be true")
+	}
+	if strings.Contains(parsed.Line, "\t") {
+		t.Fatalf("display line must not retain prefix fields, got %q", parsed.Line)
+	}
+}
+
+func TestParseSessionLineDetached(t *testing.T) {
+	raw := "1735000000\t/Users/me/projects/foo\t0\tagent-foo: 2 windows (created Fri Jan 30 10:00:00 2026)"
+	if parsed := parseSessionLine(raw); parsed.Attached {
+		t.Fatal("expected attached to be false for session_attached=0")
+	}
+}
+
+func TestParseSessionLineOlderFormatsStillParse(t *testing.T) {
+	// Output produced by an older format string must not regress.
+	twoField := parseSessionLine("1735000000\tagent-foo: 2 windows (created Fri Jan 30 10:00:00 2026)")
+	if twoField.Name != "agent-foo" || twoField.Activity != 1735000000 {
+		t.Fatalf("two-field form mis-parsed: %+v", twoField)
+	}
+	if twoField.WorkingDir != "" {
+		t.Fatalf("two-field form should have no working dir, got %q", twoField.WorkingDir)
+	}
+
+	bare := parseSessionLine("agent-foo: 2 windows (created Fri Jan 30 10:00:00 2026)")
+	if bare.Name != "agent-foo" {
+		t.Fatalf("bare form mis-parsed: %+v", bare)
+	}
+}
