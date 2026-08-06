@@ -701,15 +701,16 @@ func (m *Model) buildMultiHostFlatNodes() []*tmux.TreeNode {
 		nodes = append(nodes, hostNode)
 
 		if ht.Err != nil {
-			// Show error node for unreachable hosts
+			// Keep the host visible with a reason. The node is typed "status"
+			// rather than "pane" so it renders as a leaf without becoming a
+			// send/kill target — it has no tmux target to act on.
 			if hostExpanded {
-				errNode := &tmux.TreeNode{
-					Type:  "pane", // Use pane type for leaf rendering
-					Name:  "unreachable: " + ht.Err.Error(),
+				nodes = append(nodes, &tmux.TreeNode{
+					Type:  "status",
+					Name:  hostFailureReason(ht),
 					Level: 1,
 					Host:  ht.Host,
-				}
-				nodes = append(nodes, errNode)
+				})
 			}
 			continue
 		}
@@ -872,4 +873,20 @@ func Run(opts Options) error {
 	}
 
 	return tmux.AttachToSession(model.attachSession)
+}
+
+// hostFailureReason explains why a host's tree could not be fetched, preferring
+// the executor's classification over the raw error so that a host without tmux
+// does not read as a network failure.
+func hostFailureReason(ht tmux.HostTree) string {
+	reason := "unreachable"
+	if ht.Executor != nil {
+		if classified := ht.Executor.HostState().Reason(); classified != "" {
+			reason = classified
+		}
+	}
+	if ht.Err != nil {
+		return reason + ": " + ht.Err.Error()
+	}
+	return reason
 }

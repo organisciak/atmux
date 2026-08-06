@@ -102,8 +102,9 @@ type sessionsModel struct {
 	memoryError        error
 	executors          []tmux.TmuxExecutor
 	executorMap        map[string]tmux.TmuxExecutor
-	rawHistoryEntries  []history.Entry // Unfiltered history (for re-filtering)
-	pendingExecutors   int             // Executors still loading
+	rawHistoryEntries  []history.Entry           // Unfiltered history (for re-filtering)
+	pendingExecutors   int                       // Executors still loading
+	hostFetch          map[string]hostFetchState // Per-host outcome of the last fetch
 	confirmKill        bool
 	killSessionName    string
 	lineJump           lineJumpState
@@ -197,10 +198,11 @@ func (m sessionsModel) Init() tea.Cmd {
 // refreshAllSessions re-fetches every host, clearing retry backoff first so a
 // host that has come back up (VPN reconnected, machine woken) is retried
 // immediately instead of waiting out its backoff.
-func (m sessionsModel) refreshAllSessions() tea.Cmd {
+func (m *sessionsModel) refreshAllSessions() tea.Cmd {
 	for _, exec := range m.executors {
 		exec.ResetBackoff()
 	}
+	m.hostFetch = nil
 	return m.fetchAllSessions()
 }
 
@@ -212,7 +214,7 @@ func (m sessionsModel) fetchAllSessions() tea.Cmd {
 		executor := exec // capture for closure
 		cmds = append(cmds, func() tea.Msg {
 			lines, err := tmux.ListSessionsRawWithExecutor(executor)
-			return executorSessionsMsg{lines: lines, err: err}
+			return executorSessionsMsg{host: executor.HostLabel(), lines: lines, err: err}
 		})
 	}
 	return tea.Batch(cmds...)
@@ -246,8 +248,17 @@ func groupSessionsByHost(lines []tmux.SessionLine) []tmux.SessionLine {
 
 // executorSessionsMsg is sent when a single executor finishes loading sessions.
 type executorSessionsMsg struct {
+	host  string // Host label the result came from ("" for local)
 	lines []tmux.SessionLine
 	err   error
+}
+
+// hostFetchState is what the list knows about one host's last fetch. A host
+// that returned nothing has to stay visible with a reason; silently omitting it
+// is indistinguishable from having no sessions.
+type hostFetchState struct {
+	done bool
+	err  error
 }
 
 type historyLoadedMsg struct {
@@ -318,6 +329,10 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case executorSessionsMsg:
 		m.pendingExecutors--
+		if m.hostFetch == nil {
+			m.hostFetch = make(map[string]hostFetchState)
+		}
+		m.hostFetch[msg.host] = hostFetchState{done: true, err: msg.err}
 		if msg.err == nil && len(msg.lines) > 0 {
 			m.lines = append(m.lines, msg.lines...)
 			sort.SliceStable(m.lines, func(i, j int) bool {
@@ -812,12 +827,14 @@ func (m sessionsModel) View() string {
 			row := m.renderSessionRowFiltered(i, line, numberWidth)
 			sections = append(sections, row)
 		}
+		sections = append(sections, m.silentHostSections(vLines, sectionHeader)...)
 	} else if m.pendingExecutors > 0 {
 		sections = append(sections, sectionHeader.Render("Active"))
 		sections = append(sections, lipgloss.NewStyle().Foreground(dimColor).Render("  Loading..."))
 	} else {
 		sections = append(sections, sectionHeader.Render("Active"))
 		sections = append(sections, lipgloss.NewStyle().Foreground(dimColor).Render("  No active sessions"))
+		sections = append(sections, m.silentHostSections(nil, sectionHeader)...)
 	}
 
 	// Show loading indicator for remote hosts still connecting
@@ -1357,4 +1374,59 @@ func (m sessionsModel) renderActiveSessionRow(index int, line tmux.SessionLine, 
 		row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
 	}
 	return row
+}
+
+// silentHostSections renders a header and status line for every remote host
+// that contributed no rows. Without these, a host behind a downed VPN simply
+// vanishes from the list, which is indistinguishable from it having no
+// sessions. The rows are informational and never selectable, so they are
+// appended after the real ones and do not shift any selection index.
+func (m sessionsModel) silentHostSections(shown []tmux.SessionLine, header lipgloss.Style) []string {
+	// While searching, the list is deliberately narrowed; empty-host notices
+	// would just be noise.
+	if m.searchActive {
+		return nil
+	}
+
+	present := make(map[string]bool, len(shown))
+	for _, line := range shown {
+		present[line.Host] = true
+	}
+
+	dim := lipgloss.NewStyle().Foreground(dimColor)
+	var sections []string
+	for _, executor := range m.executors {
+		host := executor.HostLabel()
+		if host == "" || present[host] {
+			continue
+		}
+		sections = append(sections, header.Render("Active @ "+host))
+		sections = append(sections, "  "+dim.Render(m.hostStatusLine(executor)))
+	}
+	return sections
+}
+
+// hostStatusLine explains why a host shows no sessions.
+func (m sessionsModel) hostStatusLine(executor tmux.TmuxExecutor) string {
+	fetch, known := m.hostFetch[executor.HostLabel()]
+	if !known || !fetch.done {
+		return "Connecting…"
+	}
+
+	state := executor.HostState()
+	if fetch.err == nil && state.Status == tmux.HostOK {
+		return "No active sessions"
+	}
+
+	reason := state.Reason()
+	if reason == "" {
+		reason = "unreachable"
+	}
+	// Last-seen only means something when the host itself is out of contact.
+	// A host that answers but lacks tmux was "seen" moments ago, which reads
+	// as noise next to the real reason.
+	if state.Status == tmux.HostUnreachable && !state.LastOK.IsZero() {
+		return reason + " (last seen " + sessionsTimeAgo(state.LastOK) + ")"
+	}
+	return reason
 }

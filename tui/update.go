@@ -382,7 +382,7 @@ func (m Model) handleTreeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "x", "d":
 		// Kill selected session/window/pane (with confirmation)
-		if node := m.selectedNode(); node != nil && node.Type != "host" {
+		if node := m.selectedNode(); node != nil && node.Type != "host" && node.Type != "status" {
 			m.confirmKill = true
 			m.killNodeType = node.Type
 			m.killNodeTarget = node.Target
@@ -623,7 +623,7 @@ func (m Model) handleLeftClick(x, y int) (tea.Model, tea.Cmd) {
 		case buttonActionRefresh:
 			return m, m.fetchTreeCmd()
 		case buttonActionKillHint:
-			if node := m.selectedNode(); node != nil && node.Type != "host" {
+			if node := m.selectedNode(); node != nil && node.Type != "host" && node.Type != "status" {
 				m.confirmKill = true
 				m.killNodeType = node.Type
 				m.killNodeTarget = node.Target
