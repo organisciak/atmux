@@ -55,7 +55,6 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to build executors: %w", err)
 	}
 	defer closeExecutors(executors)
-	registerCleanupSignals(executors)
 
 	// Non-interactive mode: print all sessions and exit
 	if sessionsNonInteractive {

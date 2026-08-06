@@ -96,7 +96,6 @@ func runBrowse(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to build executors: %w", err)
 		}
 		defer closeExecutors(executors)
-		registerCleanupSignals(executors)
 		opts.Executors = executors
 	}
 

@@ -1,7 +1,10 @@
 package tmux
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -29,6 +32,100 @@ func TestBuildSSHInteractiveArgs_NoTmuxArgs(t *testing.T) {
 	want := []string{"-t", "-p", "22", "host", "tmux"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("buildSSHInteractiveArgs mismatch\n got: %v\nwant: %v", got, want)
+	}
+}
+
+func TestBuildSSHInteractiveArgs_ReusesControlSocket(t *testing.T) {
+	t.Setenv(controlPersistEnv, "4h")
+	e := NewRemoteExecutor("user@devbox", 22, "ssh", "devbox")
+	e.controlPath = "/tmp/atmux-1/ssh/abc.sock"
+
+	got := e.buildSSHInteractiveArgs("attach-session", "-t", "work")
+	want := []string{
+		"-t",
+		"-o", "ControlMaster=auto",
+		"-o", "ControlPath=/tmp/atmux-1/ssh/abc.sock",
+		"-o", "ControlPersist=4h",
+		"-p", "22", "user@devbox", "tmux", "attach-session", "-t", "work",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("buildSSHInteractiveArgs mismatch\n got: %v\nwant: %v", got, want)
+	}
+}
+
+func TestSSHArgs_IncludeControlPathWhenResolved(t *testing.T) {
+	t.Setenv(controlPersistEnv, "4h")
+	e := NewRemoteExecutor("user@devbox", 2222, "ssh", "devbox")
+
+	// Before the socket is resolved there is nothing to point ssh at.
+	if got := strings.Join(e.sshArgs(), " "); strings.Contains(got, "ControlPath") {
+		t.Fatalf("expected no ControlPath before resolution, got %q", got)
+	}
+
+	e.controlPath = "/tmp/atmux-1/ssh/abc.sock"
+	got := strings.Join(e.sshArgs(), " ")
+	if !strings.Contains(got, "ControlPath=/tmp/atmux-1/ssh/abc.sock") {
+		t.Fatalf("expected ControlPath in ssh args, got %q", got)
+	}
+	if !strings.Contains(got, "ControlPersist=4h") {
+		t.Fatalf("expected ControlPersist in ssh args, got %q", got)
+	}
+}
+
+func TestControlMasterAlive_NoSocket(t *testing.T) {
+	if controlMasterAlive("", "host", 22) {
+		t.Fatal("expected empty path to report not alive")
+	}
+	if controlMasterAlive("/tmp/atmux-does-not-exist.sock", "host", 22) {
+		t.Fatal("expected missing socket to report not alive")
+	}
+}
+
+func TestRemoveStaleSocket_IgnoresRegularFilesAndMissingPaths(t *testing.T) {
+	// Must not panic or delete non-socket files that happen to share the path.
+	removeStaleSocket("")
+	removeStaleSocket("/tmp/atmux-does-not-exist.sock")
+
+	dir := shortTempDir(t)
+	regular := filepath.Join(dir, "not-a-socket")
+	if err := os.WriteFile(regular, []byte("x"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	removeStaleSocket(regular)
+	if _, err := os.Stat(regular); err != nil {
+		t.Fatalf("regular file should not be removed: %v", err)
+	}
+}
+
+func TestDisconnect_NoSocketIsNoOp(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", shortTempDir(t))
+	e := NewRemoteExecutor("user@devbox", 22, "ssh", "devbox")
+	if err := e.Disconnect(); err != nil {
+		t.Fatalf("Disconnect with no socket should succeed, got %v", err)
+	}
+}
+
+func TestClose_LeavesControlSocketIntact(t *testing.T) {
+	dir := shortTempDir(t)
+	t.Setenv("XDG_CACHE_HOME", dir)
+
+	e := NewRemoteExecutor("user@devbox", 22, "ssh", "devbox")
+	path, err := controlSocketPath(e.Host, e.Port)
+	if err != nil {
+		t.Fatalf("controlSocketPath: %v", err)
+	}
+	e.controlPath = path
+
+	// Stand in for a live master so we can assert Close does not remove it.
+	if err := os.WriteFile(path, []byte("placeholder"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := e.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("Close must leave the shared socket in place, got %v", err)
 	}
 }
 
