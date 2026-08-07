@@ -61,6 +61,7 @@ type RemoteExecutor struct {
 	backoff      time.Duration
 	lastVerified time.Time // When the control master was last confirmed alive
 	atmux        remoteAtmuxMode
+	shell        remoteShellMode
 }
 
 // NewRemoteExecutor creates a new RemoteExecutor for the given host.
@@ -284,33 +285,85 @@ func remoteCommand(command string, args []string) string {
 	return strings.Join(parts, " ")
 }
 
-// runRemote executes a command string over SSH and records what the outcome
-// says about the host's reachability. notFoundStatus is the status to record
-// when the remote reports the command is missing: a missing tmux makes the host
-// unusable, but a missing probe binary says nothing about the host's health.
-func (e *RemoteExecutor) runRemote(command string, notFoundStatus HostStatus) ([]byte, error) {
-	if err := e.ensureControlMaster(); err != nil {
-		return nil, err
-	}
-
+// execSSH runs one already-rendered command string on the host.
+func (e *RemoteExecutor) execSSH(command string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultSSHTimeout)
 	defer cancel()
 
 	sshArgs := e.sshArgs()
 	sshArgs = append(sshArgs, e.Host, command)
 
-	out, err := exec.CommandContext(ctx, "ssh", sshArgs...).Output()
+	return exec.CommandContext(ctx, "ssh", sshArgs...).Output()
+}
+
+// runRemote executes a command on the host and records what the outcome says
+// about its reachability. notFoundStatus is the status to record when the
+// command is genuinely missing: a missing tmux makes the host unusable, but a
+// missing probe binary says nothing about the host's health.
+//
+// A "command not found" is retried through a login shell before it is believed.
+// SSH runs a non-interactive, non-login shell, whose PATH is frequently just
+// the system defaults — a Mac with Homebrew or /usr/local/bin reports tmux
+// missing while it is installed and running sessions.
+func (e *RemoteExecutor) runRemote(command string, args []string, notFoundStatus HostStatus) ([]byte, error) {
+	if err := e.ensureControlMaster(); err != nil {
+		return nil, err
+	}
+
+	mode := e.shellMode()
+	out, err := e.execSSH(wrapRemoteCommand(mode, command, args))
+
+	if err == nil {
+		if mode == remoteShellUnknown {
+			e.setShellMode(remoteShellDirect)
+		}
+		e.recordOutcome(nil, notFoundStatus)
+		return out, nil
+	}
+
+	if mode == remoteShellUnknown && classifyExecError(err) == HostTmuxMissing {
+		if retried, rerr := e.execSSH(wrapRemoteCommand(remoteShellLogin, command, args)); rerr == nil {
+			e.setShellMode(remoteShellLogin)
+			e.recordOutcome(nil, notFoundStatus)
+			return retried, nil
+		}
+	}
+
 	e.recordOutcome(err, notFoundStatus)
 	return out, err
 }
 
+// shellMode reports how commands must be invoked on this host.
+func (e *RemoteExecutor) shellMode() remoteShellMode {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.shell
+}
+
+func (e *RemoteExecutor) setShellMode(mode remoteShellMode) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.shell = mode
+}
+
+// ensureShellMode settles how commands must be invoked, probing with a cheap
+// command when it is not yet known. Used before an interactive attach, which
+// cannot retry once it owns the terminal.
+func (e *RemoteExecutor) ensureShellMode() remoteShellMode {
+	if mode := e.shellMode(); mode != remoteShellUnknown {
+		return mode
+	}
+	e.runRemote("tmux", []string{"-V"}, HostTmuxMissing) //nolint:errcheck
+	return e.shellMode()
+}
+
 func (e *RemoteExecutor) Run(args ...string) error {
-	_, err := e.runRemote(remoteCommand("tmux", args), HostTmuxMissing)
+	_, err := e.runRemote("tmux", args, HostTmuxMissing)
 	return err
 }
 
 func (e *RemoteExecutor) Output(args ...string) ([]byte, error) {
-	return e.runRemote(remoteCommand("tmux", args), HostTmuxMissing)
+	return e.runRemote("tmux", args, HostTmuxMissing)
 }
 
 func (e *RemoteExecutor) RunWithDir(dir string, args ...string) error {
@@ -339,6 +392,9 @@ func (e *RemoteExecutor) Interactive(args ...string) error {
 // buildSSHInteractiveArgs constructs the argument list for an interactive SSH
 // attach. When a control socket has been resolved the attach rides the existing
 // master, so attaching costs no additional handshake.
+//
+// shellMode decides how tmux is invoked: on a host whose non-login PATH lacks
+// tmux, the attach has to go through a login shell or it fails immediately.
 func (e *RemoteExecutor) buildSSHInteractiveArgs(args ...string) []string {
 	sshArgs := []string{
 		"-t", // Force pseudo-terminal
@@ -350,19 +406,19 @@ func (e *RemoteExecutor) buildSSHInteractiveArgs(args ...string) []string {
 			"-o", "ControlPersist="+controlPersist(),
 		)
 	}
-	sshArgs = append(sshArgs,
-		"-p", strconv.Itoa(e.Port),
-		e.Host,
-		"tmux",
-	)
-	sshArgs = append(sshArgs, args...)
-	return sshArgs
+	sshArgs = append(sshArgs, "-p", strconv.Itoa(e.Port), e.Host)
+
+	if e.shellMode() == remoteShellLogin {
+		return append(sshArgs, loginShellFallback, "-lc", remoteCommand("tmux", args))
+	}
+	return append(sshArgs, append([]string{"tmux"}, args...)...)
 }
 
 func (e *RemoteExecutor) interactiveSSH(args ...string) error {
 	// Best effort: a missing master only costs a handshake, so never block the
-	// attach on control socket setup.
-	e.ensureControlMaster() //nolint:errcheck
+	// attach on control socket setup. Settling the shell mode here matters
+	// more — an interactive attach cannot retry once it owns the terminal.
+	e.ensureShellMode()
 
 	sshArgs := e.buildSSHInteractiveArgs(args...)
 
@@ -377,9 +433,14 @@ func (e *RemoteExecutor) interactiveSSH(args ...string) error {
 }
 
 // buildMoshArgs constructs the argument list for an interactive mosh attach.
+// As with SSH, a host whose non-login PATH lacks tmux needs a login shell.
 func (e *RemoteExecutor) buildMoshArgs(args ...string) []string {
-	moshArgs := []string{e.Host, "--", "tmux"}
-	moshArgs = append(moshArgs, args...)
+	moshArgs := []string{e.Host, "--"}
+	if e.shellMode() == remoteShellLogin {
+		moshArgs = append(moshArgs, loginShellFallback, "-lc", remoteCommand("tmux", args))
+	} else {
+		moshArgs = append(moshArgs, append([]string{"tmux"}, args...)...)
+	}
 
 	if e.Port != defaultSSHPort {
 		moshArgs = append([]string{"--ssh=ssh -p " + strconv.Itoa(e.Port)}, moshArgs...)
@@ -388,6 +449,8 @@ func (e *RemoteExecutor) buildMoshArgs(args ...string) []string {
 }
 
 func (e *RemoteExecutor) interactiveMosh(args ...string) error {
+	e.ensureShellMode()
+
 	moshArgs := e.buildMoshArgs(args...)
 
 	cmd := exec.Command("mosh", moshArgs...)
@@ -402,7 +465,7 @@ func (e *RemoteExecutor) interactiveMosh(args ...string) error {
 
 func (e *RemoteExecutor) RunGeneric(command string, args ...string) ([]byte, error) {
 	// A missing probe binary is not a sign of an unhealthy host.
-	return e.runRemote(remoteCommand(command, args), HostOK)
+	return e.runRemote(command, args, HostOK)
 }
 
 // socketExists checks whether a Unix socket file exists at the given path.

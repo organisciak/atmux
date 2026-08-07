@@ -99,6 +99,24 @@ host that has come back up is picked up without restarting atmux.
 An unreachable host never removes or delays local sessions; hosts are fetched
 concurrently and local results render immediately.
 
+## Login shells and PATH
+
+SSH runs commands in a non-interactive, non-login shell. Its PATH is often only
+the system defaults — on macOS, literally `/usr/bin:/bin:/usr/sbin:/sbin`, which
+excludes `/usr/local/bin` and Homebrew. A host can therefore report
+
+```
+zsh:1: command not found: tmux
+```
+
+while tmux is installed and running sessions.
+
+atmux never takes that at face value. A "command not found" is retried through
+`bash -lc`, and the working form is remembered for the host so the retry happens
+once, not per command. Interactive attaches settle the mode before taking over
+the terminal, since they cannot retry afterwards. Only when the login shell also
+fails is a host reported as lacking tmux.
+
 ## Rich remote metadata
 
 Plain `tmux list-sessions` cannot report working directories that mean anything

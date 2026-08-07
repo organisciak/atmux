@@ -2,33 +2,9 @@ package tmux
 
 import (
 	"encoding/json"
-	"reflect"
 	"testing"
 	"time"
 )
-
-func TestRemoteAtmuxArgs_Direct(t *testing.T) {
-	command, args := remoteAtmuxArgs(remoteAtmuxDirect, "sessions", "--json")
-	if command != "atmux" {
-		t.Fatalf("command = %q, want atmux", command)
-	}
-	if !reflect.DeepEqual(args, []string{"sessions", "--json"}) {
-		t.Fatalf("args = %v", args)
-	}
-}
-
-func TestRemoteAtmuxArgs_LoginShell(t *testing.T) {
-	// SSH runs a non-login shell, which on many setups skips the profile that
-	// puts atmux on PATH. The fallback must send one shell-quotable string.
-	command, args := remoteAtmuxArgs(remoteAtmuxLoginShell, "sessions", "--json")
-	if command != loginShellFallback {
-		t.Fatalf("command = %q, want %q", command, loginShellFallback)
-	}
-	want := []string{"-lc", "atmux sessions --json"}
-	if !reflect.DeepEqual(args, want) {
-		t.Fatalf("args = %v, want %v", args, want)
-	}
-}
 
 func TestParseSessionsPayload_TagsHostAndCarriesMetadata(t *testing.T) {
 	count := 7
@@ -138,9 +114,9 @@ func TestRemoteAtmuxMode_CachedAcrossCalls(t *testing.T) {
 		t.Fatal("an absent atmux must not report as available")
 	}
 
-	e.setAtmuxMode(remoteAtmuxLoginShell)
+	e.setAtmuxMode(remoteAtmuxAvailable)
 	if !e.RemoteAtmuxAvailable() {
-		t.Fatal("a login-shell atmux is still available")
+		t.Fatal("a probed-available atmux must report as available")
 	}
 }
 
