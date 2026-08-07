@@ -148,13 +148,34 @@ func runRemoteList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "%-12s %-38s %-6s %-13s %s\n", "ALIAS", "HOST", "VIA", "STATE", "SESSIONS")
+
 	for _, exec := range executors {
 		state := "disconnected"
 		if exec.ControlSocketActive() {
 			state = "connected"
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-30s %-6s %s\n",
-			exec.Alias, exec.Host, exec.AttachMethod, state)
+
+		// Listing sessions is also what probes the host, so this doubles as a
+		// status check: it reports whether the host serves rich metadata
+		// through its own atmux or falls back to plain tmux.
+		detail := ""
+		lines, lerr := tmux.ListSessionsRawWithExecutor(exec)
+		switch {
+		case lerr != nil:
+			state = exec.HostState().Reason()
+			if state == "" {
+				state = "unreachable"
+			}
+		case exec.RemoteAtmuxAvailable():
+			detail = fmt.Sprintf("%d (via remote atmux)", len(lines))
+		default:
+			detail = fmt.Sprintf("%d (via tmux)", len(lines))
+		}
+
+		fmt.Fprintf(out, "%-12s %-38s %-6s %-13s %s\n",
+			exec.Alias, exec.Host, exec.AttachMethod, state, detail)
 	}
 	return nil
 }
