@@ -173,3 +173,19 @@ func TestParseSessionLineOlderFormatsStillParse(t *testing.T) {
 		t.Fatalf("bare form mis-parsed: %+v", bare)
 	}
 }
+
+func TestParseSessionLineAttachedIsAClientCount(t *testing.T) {
+	// tmux's session_attached is the number of attached clients, not a flag.
+	// A session with ten clients reports "10", which must still be attached.
+	for _, count := range []string{"1", "2", "10"} {
+		raw := "1735000000\t/tmp/foo\t" + count + "\tagent-foo: 1 windows (created X) (attached)"
+		if parsed := parseSessionLine(raw); !parsed.Attached {
+			t.Errorf("session_attached=%q should count as attached", count)
+		}
+	}
+
+	raw := "1735000000\t/tmp/foo\t0\tagent-foo: 1 windows (created X)"
+	if parsed := parseSessionLine(raw); parsed.Attached {
+		t.Error("session_attached=0 must not count as attached")
+	}
+}

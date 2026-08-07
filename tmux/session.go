@@ -356,7 +356,9 @@ func parseSessionLine(line string) SessionLine {
 				workingDir = parts[1]
 			}
 			if len(parts) >= 4 {
-				attached = parts[2] == "1"
+				// session_attached is a count of attached clients, not a
+				// boolean — a session with several clients reports "10".
+				attached = parts[2] != "" && parts[2] != "0"
 			}
 		}
 	}
