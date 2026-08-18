@@ -31,6 +31,7 @@ $ atmux sessions --json
 | `activity`    | integer | Unix timestamp of last activity; used for sorting. |
 | `color`       | string  | Project accent colour from the project's `.agent-tmux.conf`. Omitted when unset. |
 | `beads_open`  | integer | Open beads issues. **Omitted** when the directory is not a beads project. |
+| `title`       | string  | The agent's own session name, read from the pane title. Omitted when the session has no agent pane. See [Agent session titles](./session-titles.md). |
 
 ### `beads_open` is deliberately nullable
 

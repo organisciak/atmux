@@ -55,6 +55,7 @@ type Config struct {
 	RemoteProjects []RemoteProjectConfig // Reusable remote projects
 	URLs           []URLConfig           // Quick-link URLs for the project
 	Color          string                // tmux accent color (hex, named, or colour###)
+	SessionTitle   bool                  // Show the agent's session title in the tmux status bar
 }
 
 const (
@@ -63,6 +64,18 @@ const (
 )
 
 var remoteProjectSessionSlug = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
+// parseBoolDirective reads an on/off style config value.
+func parseBoolDirective(value string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "on", "true", "yes", "1", "":
+		// A bare directive with no value reads as "turn this on".
+		return true, nil
+	case "off", "false", "no", "0":
+		return false, nil
+	}
+	return false, fmt.Errorf("must be on or off, got %q", value)
+}
 
 // NormalizeRemoteHost validates and normalizes a remote host config.
 func NormalizeRemoteHost(rh RemoteHostConfig) (RemoteHostConfig, error) {
@@ -255,6 +268,7 @@ func mergeConfigs(global, local *Config) *Config {
 		result.RemoteProjects = append(result.RemoteProjects, global.RemoteProjects...)
 		result.URLs = append(result.URLs, global.URLs...)
 		result.Color = global.Color
+		result.SessionTitle = global.SessionTitle
 	}
 
 	// Override/add from local
@@ -271,6 +285,9 @@ func mergeConfigs(global, local *Config) *Config {
 		result.URLs = append(result.URLs, local.URLs...)
 		if local.Color != "" {
 			result.Color = local.Color
+		}
+		if local.SessionTitle {
+			result.SessionTitle = true
 		}
 	}
 
@@ -448,6 +465,13 @@ func Parse(path string) (*Config, error) {
 				return nil, fmt.Errorf("%s:%d: %w", path, lineNumber, err)
 			}
 			config.Color = normalized
+
+		case "session_title":
+			enabled, err := parseBoolDirective(value)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: session_title %w", path, lineNumber, err)
+			}
+			config.SessionTitle = enabled
 
 		case "remote_project_session":
 			if currentRemoteProject == nil {
@@ -662,6 +686,17 @@ func DefaultTemplate() string {
 # pane:nvim .
 # vpane:npm run dev
 # vpane:npm test -- --watch
+
+# ── Session Title in the Status Bar ──────────────────────────────────
+# Show the running agent's own session name in this session's tmux status
+# bar. Claude Code keeps the terminal title set to the current
+# conversation's name, and the leading glyph doubles as an activity
+# indicator: a spinner while the agent is working.
+#
+# Rename a Claude Code conversation with /resume, then Ctrl+R.
+# Toggle without editing this file: atmux title on|off
+#
+# session_title:on
 
 # ── Quick-Link URLs ──────────────────────────────────────────────────
 # Surfaces clickable URLs in the bottom row of "atmux live". Press the

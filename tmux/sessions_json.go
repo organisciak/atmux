@@ -29,6 +29,9 @@ type SessionJSON struct {
 	WorkingDir string `json:"working_dir,omitempty"`
 	Activity   int64  `json:"activity,omitempty"`
 	Color      string `json:"color,omitempty"`
+	// Title is the agent's own session name, e.g. Claude Code's conversation
+	// title. Omitted when the session has no agent pane.
+	Title string `json:"title,omitempty"`
 
 	// BeadsOpen is nil when the session's directory is not a beads project,
 	// which is distinct from a project with zero open issues.
@@ -48,6 +51,7 @@ func BuildSessionsPayload(lines []SessionLine, version string, now time.Time, in
 			WorkingDir: line.WorkingDir,
 			Activity:   line.Activity,
 			Color:      line.Color,
+			Title:      line.Title,
 		}
 		if includeBeads {
 			if count, ok := BeadsOpenCount(line.WorkingDir); ok {
@@ -91,6 +95,7 @@ func ParseSessionsPayload(data []byte, host string) ([]SessionLine, error) {
 			Color:      s.Color,
 			Attached:   s.Attached,
 			Beads:      s.BeadsOpen,
+			Title:      s.Title,
 		})
 	}
 	return lines, nil

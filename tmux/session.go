@@ -32,6 +32,9 @@ type SessionLine struct {
 	// nil for local sessions, which the TUI counts asynchronously instead, and
 	// for directories that are not beads projects.
 	Beads *int
+	// Title is the agent's own session name, read from the pane title. Empty
+	// when the session has no agent pane or the agent has not named itself yet.
+	Title string
 }
 
 // NewSession creates a new session configuration based on the current directory
@@ -166,12 +169,60 @@ func ClearColorOnSession(name string) error {
 	return s.ClearColor()
 }
 
+// sessionTitleStatusRight renders the active pane's title in the status bar.
+//
+// Claude Code keeps the terminal title set to the current session name, which
+// tmux exposes as pane_title, so this shows which conversation a session is
+// holding without any cooperation from Claude itself. The leading glyph Claude
+// prefixes (a spinner while working, otherwise a star) comes along with it and
+// doubles as an activity indicator.
+//
+// Plain "=60" truncation is used rather than the newer "=/60/…" ellipsis form,
+// which older tmux renders literally.
+const sessionTitleStatusRight = " #{=60:pane_title} "
+
+// ApplySessionTitle shows the active pane's title in this session's status bar.
+// The option is set on the session only, so a user's global status-right is
+// left alone everywhere else.
+func (s *Session) ApplySessionTitle() error {
+	if err := s.run("set-option", "-t", s.Name, "status-right", sessionTitleStatusRight); err != nil {
+		return err
+	}
+	return s.run("set-option", "-t", s.Name, "status-right-length", "64")
+}
+
+// ClearSessionTitle restores the session's inherited status-right.
+func (s *Session) ClearSessionTitle() error {
+	s.run("set-option", "-t", s.Name, "-u", "status-right")
+	s.run("set-option", "-t", s.Name, "-u", "status-right-length")
+	return nil
+}
+
+// ApplySessionTitleToSession is a free function so callers can toggle the
+// status bar on an already-running session.
+func ApplySessionTitleToSession(name string, enabled bool) error {
+	if name == "" {
+		return nil
+	}
+	s := &Session{Name: name}
+	if enabled {
+		return s.ApplySessionTitle()
+	}
+	return s.ClearSessionTitle()
+}
+
 // ApplyConfig applies project-specific configuration
 func (s *Session) ApplyConfig(cfg *config.Config) error {
 	// Apply project color before windows/panes so the status bar shows
 	// the right tint from the moment the session is first visible.
 	if cfg.Color != "" {
 		if err := s.ApplyColor(cfg.Color); err != nil {
+			return err
+		}
+	}
+
+	if cfg.SessionTitle {
+		if err := s.ApplySessionTitle(); err != nil {
 			return err
 		}
 	}
@@ -411,8 +462,10 @@ func ListSessionsRawWithExecutor(exec TmuxExecutor) ([]SessionLine, error) {
 
 	sessions := parseSessionLines(string(output))
 	host := exec.HostLabel()
+	titles := FetchSessionTitles(exec)
 	for i := range sessions {
 		sessions[i].Host = host
+		sessions[i].Title = titles[sessions[i].Name]
 	}
 	if !exec.IsRemote() {
 		populateLocalColors(sessions)

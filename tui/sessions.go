@@ -1239,7 +1239,7 @@ func (m sessionsModel) renderSessionRowFiltered(visibleIdx int, line tmux.Sessio
 		if memSummary != "" {
 			row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
 		}
-		return row
+		return m.appendTitle(row, line)
 	}
 
 	row := "  " +
@@ -1252,7 +1252,7 @@ func (m sessionsModel) renderSessionRowFiltered(visibleIdx int, line tmux.Sessio
 	if memSummary != "" {
 		row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
 	}
-	return row
+	return m.appendTitle(row, line)
 }
 
 // renderLineWithHighlight renders a session line, highlighting fuzzy match characters
@@ -1360,7 +1360,7 @@ func (m sessionsModel) renderActiveSessionRow(index int, line tmux.SessionLine, 
 		if memSummary != "" {
 			row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
 		}
-		return row
+		return m.appendTitle(row, line)
 	}
 
 	row := "  " +
@@ -1373,7 +1373,7 @@ func (m sessionsModel) renderActiveSessionRow(index int, line tmux.SessionLine, 
 	if memSummary != "" {
 		row += "  " + lipgloss.NewStyle().Foreground(dimColor).Render(memSummary)
 	}
-	return row
+	return m.appendTitle(row, line)
 }
 
 // silentHostSections renders a header and status line for every remote host
@@ -1429,4 +1429,38 @@ func (m sessionsModel) hostStatusLine(executor tmux.TmuxExecutor) string {
 		return reason + " (last seen " + sessionsTimeAgo(state.LastOK) + ")"
 	}
 	return reason
+}
+
+// titleLabel renders the agent's own session name for a row.
+//
+// The leading glyph Claude Code prefixes is a live activity indicator, so it is
+// left undimmed while the name itself recedes — at a glance the spinner shows
+// which of several sessions is actually working.
+func (m sessionsModel) titleLabel(line tmux.SessionLine) string {
+	glyph, text := tmux.SplitAgentTitle(line.Title)
+	if text == "" {
+		return ""
+	}
+
+	label := lipgloss.NewStyle().Foreground(dimColor).Render(text)
+	if glyph != "" {
+		return glyph + " " + label
+	}
+	return label
+}
+
+// appendTitle adds the agent title to a row when it fits.
+//
+// Rows already carry window counts, beads, and memory; the title is the least
+// critical of them, so it is the one dropped when the terminal is narrow rather
+// than being allowed to wrap the row.
+func (m sessionsModel) appendTitle(row string, line tmux.SessionLine) string {
+	label := m.titleLabel(line)
+	if label == "" {
+		return row
+	}
+	if m.width > 0 && lipgloss.Width(row)+lipgloss.Width(label)+2 > m.width {
+		return row
+	}
+	return row + "  " + label
 }
