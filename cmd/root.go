@@ -77,6 +77,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 				if cfg != nil {
 					session.ApplyConfig(cfg)
 				}
+				maybeEnableRemoteControl(cfg, session.Name)
 				session.SelectDefault()
 			}
 			target = session.Name
@@ -144,8 +145,31 @@ func runDirectAttach(session *tmux.Session, workingDir string) error {
 
 	// Save to history and attach
 	saveHistory(filepath.Base(workingDir), workingDir, session.Name, "", "")
+	maybeEnableRemoteControl(cfg, session.Name)
 	session.SelectDefault()
 	return session.Attach()
+}
+
+// maybeEnableRemoteControl turns on Claude Code Remote Control for a session
+// that just started, when the project asks for it.
+//
+// It runs before attaching so the whole "connect, launch, switch to the phone"
+// flow is one command over a slow link. Failure is a warning rather than an
+// error: the session itself is fine, and `atmux rc` can enable it later.
+func maybeEnableRemoteControl(cfg *config.Config, sessionName string) {
+	if cfg == nil || !cfg.RemoteControl {
+		return
+	}
+
+	displayName := tmux.RemoteControlDisplayName(sessionName)
+	fmt.Printf("Enabling Remote Control as %q (waiting for the agent to start)...\n", displayName)
+
+	if err := tmux.EnableRemoteControl(tmux.NewLocalExecutor(), sessionName, displayName); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not enable Remote Control: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Run `atmux rc` once the agent is up.")
+		return
+	}
+	fmt.Println("Remote Control enabled. Open the Claude app to pick it up.")
 }
 
 // saveHistory saves a session to history, logging any errors.

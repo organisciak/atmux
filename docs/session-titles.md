@@ -72,6 +72,11 @@ glance across a dozen sessions shows which ones are actually busy.
 stable string — searching, sorting, or storage — since the glyph changes from
 moment to moment.
 
+## Related
+
+[Remote Control at launch](./remote-control.md) enables Claude Code's remote
+access when a session starts, naming the remote session the same way.
+
 ## Renaming a conversation
 
 There is no `/rename` slash command. Inside Claude Code:

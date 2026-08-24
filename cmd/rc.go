@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
-	"regexp"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -123,7 +121,7 @@ func runRC(cmd *cobra.Command, args []string) error {
 		name := rcCommand
 		// If no custom name, use session-based name in atmux style
 		if len(args) == 0 {
-			slug := makeSlug(cp.SessionName)
+			slug := tmux.RemoteControlDisplayName(cp.SessionName)
 			name = rcCommand + " " + slug
 		}
 
@@ -141,26 +139,6 @@ func runRC(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\nRemote Control enabled on %d pane(s).\n", len(selected))
 	fmt.Println("Connect at claude.ai/code or the Claude mobile app.")
 	return nil
-}
-
-// makeSlug creates a display name from a session name.
-// Strips common prefixes and cleans up for human readability.
-func makeSlug(sessionName string) string {
-	name := sessionName
-	// Strip atmux prefixes
-	for _, prefix := range []string{"agent-", "atmux-"} {
-		name = strings.TrimPrefix(name, prefix)
-	}
-	// Replace underscores with spaces, title-case
-	name = strings.ReplaceAll(name, "_", " ")
-	name = strings.ReplaceAll(name, "-", " ")
-	// Clean up whitespace
-	reg := regexp.MustCompile(`\s+`)
-	name = reg.ReplaceAllString(strings.TrimSpace(name), " ")
-	if name == "" {
-		name = filepath.Base(sessionName)
-	}
-	return name
 }
 
 // --- Checkbox TUI ---
