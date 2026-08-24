@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -65,5 +66,37 @@ func TestSessionTitle_LocalEnablesOverGlobal(t *testing.T) {
 	inherited := mergeConfigs(&Config{SessionTitle: true}, &Config{})
 	if !inherited.SessionTitle {
 		t.Fatal("a global opt-in should carry into projects")
+	}
+}
+
+func TestRemoteControlDirective(t *testing.T) {
+	if !parseDirective(t, "remote_control:on\n").RemoteControl {
+		t.Error("remote_control:on should enable it")
+	}
+	if parseDirective(t, "remote_control:off\n").RemoteControl {
+		t.Error("remote_control:off should disable it")
+	}
+	// Opening remote access must never be an accident of omission.
+	if parseDirective(t, "color:#ff0000\n").RemoteControl {
+		t.Error("remote control must default to off")
+	}
+}
+
+func TestRemoteControl_LocalEnablesOverGlobal(t *testing.T) {
+	if !mergeConfigs(&Config{}, &Config{RemoteControl: true}).RemoteControl {
+		t.Error("a project opting in should win")
+	}
+	if !mergeConfigs(&Config{RemoteControl: true}, &Config{}).RemoteControl {
+		t.Error("a global opt-in should carry into projects")
+	}
+}
+
+func TestGlobalTemplate_UsesAutoPermissions(t *testing.T) {
+	tpl := GlobalTemplate()
+	if !strings.Contains(tpl, "--permission-mode auto") {
+		t.Error("global template should default to auto permissions")
+	}
+	if strings.Contains(tpl, "agent:claude --dangerously-skip-permissions") {
+		t.Error("global template should no longer default to bypassing permissions")
 	}
 }

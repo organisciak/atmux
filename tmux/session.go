@@ -56,10 +56,15 @@ func (s *Session) Exists() bool {
 	return cmd.Run() == nil
 }
 
-// DefaultAgents returns the default agent commands when no config is provided
+// DefaultAgents returns the default agent commands when no config is provided.
+//
+// "auto" permissions rather than --dangerously-skip-permissions: it is the
+// mode that still asks about genuinely risky actions. --continue resumes the
+// project's last conversation, and FirstRunPrep strips it for a directory that
+// has never had a session, so a brand-new project still starts fresh.
 func DefaultAgents() []config.AgentConfig {
 	return []config.AgentConfig{
-		{Command: "claude --dangerously-skip-permissions"},
+		{Command: "claude --permission-mode auto --continue"},
 	}
 }
 

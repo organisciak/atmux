@@ -96,7 +96,7 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(out, "  Project: "+codeStyle.Render(".agent-tmux.conf")+" (overrides global)")
 	fmt.Fprintln(out, dimStyle.Render(`
     # Example config
-    agent:claude --dangerously-skip-permissions
+    agent:claude --permission-mode auto --continue
     agent:codex --full-auto
 
     window:dev

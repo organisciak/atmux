@@ -56,6 +56,7 @@ type Config struct {
 	URLs           []URLConfig           // Quick-link URLs for the project
 	Color          string                // tmux accent color (hex, named, or colour###)
 	SessionTitle   bool                  // Show the agent's session title in the tmux status bar
+	RemoteControl  bool                  // Enable Claude Code Remote Control when the session starts
 }
 
 const (
@@ -269,6 +270,7 @@ func mergeConfigs(global, local *Config) *Config {
 		result.URLs = append(result.URLs, global.URLs...)
 		result.Color = global.Color
 		result.SessionTitle = global.SessionTitle
+		result.RemoteControl = global.RemoteControl
 	}
 
 	// Override/add from local
@@ -288,6 +290,9 @@ func mergeConfigs(global, local *Config) *Config {
 		}
 		if local.SessionTitle {
 			result.SessionTitle = true
+		}
+		if local.RemoteControl {
+			result.RemoteControl = true
 		}
 	}
 
@@ -473,6 +478,13 @@ func Parse(path string) (*Config, error) {
 			}
 			config.SessionTitle = enabled
 
+		case "remote_control":
+			enabled, err := parseBoolDirective(value)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: remote_control %w", path, lineNumber, err)
+			}
+			config.RemoteControl = enabled
+
 		case "remote_project_session":
 			if currentRemoteProject == nil {
 				return nil, fmt.Errorf("%s:%d: remote_project_session requires a preceding remote_project", path, lineNumber)
@@ -643,7 +655,7 @@ func DefaultTemplate() string {
 # Override the default agent panes. When any agent: line is present,
 # it replaces the built-in defaults entirely.
 #
-# agent:claude --dangerously-skip-permissions
+# agent:claude --permission-mode auto --continue
 # agent:codex --full-auto
 
 # ── Extra Panes in the Agents Window ─────────────────────────────────
@@ -698,6 +710,16 @@ func DefaultTemplate() string {
 #
 # session_title:on
 
+# ── Remote Control ───────────────────────────────────────────────────
+# Enable Claude Code Remote Control as soon as the session starts, so the
+# session shows up in the Claude mobile app without a second command.
+# Handy over a slow link: mosh in, run atmux, switch to your phone.
+#
+# The remote session is named after the tmux session (agent-my-app becomes
+# "my app"). Off by default, since it opens remote access.
+#
+# remote_control:on
+
 # ── Quick-Link URLs ──────────────────────────────────────────────────
 # Surfaces clickable URLs in the bottom row of "atmux live". Press the
 # matching number key (1-9) or click to open in your default browser.
@@ -732,7 +754,7 @@ func GlobalTemplate() string {
 # Local .agent-tmux.conf files override these settings
 
 # Core agent panes (shown in every session's agents window)
-agent:claude --dangerously-skip-permissions
+agent:claude --permission-mode auto --continue
 
 # Directives:
 #   agent:command   - Define a core agent pane
