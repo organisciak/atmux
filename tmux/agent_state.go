@@ -219,13 +219,14 @@ func parentPIDs() map[int]int {
 	return parents
 }
 
-// LoadTranscripts reads recaps and last messages for the panes that have a
-// registry entry. Transcripts only exist on the machine running Claude, so
-// remote panes are left without.
+// LoadTranscripts reads recaps and last messages for local panes that have a
+// registry entry. Remote panes are skipped: their host's atmux already filled
+// them in, and their transcripts are not on this machine to read.
 func LoadTranscripts(agents []AgentPane) {
 	for i := range agents {
-		if agents[i].Found {
-			agents[i].Transcript = claude.ReadTranscript(agents[i].Process.SessionID)
+		a := &agents[i]
+		if a.Found && (a.Executor == nil || !a.Executor.IsRemote()) {
+			a.Transcript = claude.ReadTranscript(a.Process.SessionID)
 		}
 	}
 }

@@ -103,3 +103,17 @@ func TestParseAgentsPayloadRejectsNewerSchema(t *testing.T) {
 		t.Fatal("newer schema accepted")
 	}
 }
+
+func TestLoadTranscriptsKeepsWhatARemoteHostSent(t *testing.T) {
+	remote := NewRemoteExecutor("vps.example", 22, "ssh", "vps")
+	agents := []AgentPane{{
+		ClaudePane: ClaudePane{Executor: remote, Host: "vps"},
+		Process:    claude.Process{SessionID: "not-on-this-machine"},
+		Found:      true,
+		Transcript: claude.Transcript{Recap: "from the host"},
+	}}
+	LoadTranscripts(agents)
+	if agents[0].Transcript.Recap != "from the host" || agents[0].Transcript.Empty {
+		t.Fatalf("remote transcript overwritten: %+v", agents[0].Transcript)
+	}
+}
