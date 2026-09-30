@@ -60,7 +60,7 @@ func TestFetchTreeWithExecutors_LocalOnly(t *testing.T) {
 				output: []byte("@1:0:bash:1\n"),
 			},
 			"list-panes": {
-				output: []byte("%1:0:title:bash:1:80:24\n"),
+				output: []byte("%1\t0\ttitle\tbash\t1\t80\t24\n"),
 			},
 		},
 	}
@@ -101,7 +101,7 @@ func TestFetchTreeWithExecutors_MultiHost(t *testing.T) {
 		responses: map[string]fakeResponse{
 			"list-sessions": {output: []byte("local-sess:0\n")},
 			"list-windows":  {output: []byte("@1:0:bash:1\n")},
-			"list-panes":    {output: []byte("%1:0:title:bash:1:80:24\n")},
+			"list-panes":    {output: []byte("%1\t0\ttitle\tbash\t1\t80\t24\n")},
 		},
 	}
 	remote := &fakeExecutor{
@@ -110,7 +110,7 @@ func TestFetchTreeWithExecutors_MultiHost(t *testing.T) {
 		responses: map[string]fakeResponse{
 			"list-sessions": {output: []byte("remote-sess:1\n")},
 			"list-windows":  {output: []byte("@2:0:zsh:0\n")},
-			"list-panes":    {output: []byte("%2:0:remote-title:zsh:1:120:40\n")},
+			"list-panes":    {output: []byte("%2\t0\tremote-title\tzsh\t1\t120\t40\n")},
 		},
 	}
 
@@ -153,7 +153,7 @@ func TestFetchTreeWithExecutors_RemoteFailureNonFatal(t *testing.T) {
 		responses: map[string]fakeResponse{
 			"list-sessions": {output: []byte("ok-sess:0\n")},
 			"list-windows":  {output: []byte("@1:0:bash:1\n")},
-			"list-panes":    {output: []byte("%1:0:title:bash:1:80:24\n")},
+			"list-panes":    {output: []byte("%1\t0\ttitle\tbash\t1\t80\t24\n")},
 		},
 	}
 	broken := &fakeExecutor{

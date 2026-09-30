@@ -205,7 +205,7 @@ func listWindowsWithExecutor(exec TmuxExecutor, sessionName string) ([]Window, e
 func listPanesWithExecutor(exec TmuxExecutor, sessionName string, windowIndex int) ([]Pane, error) {
 	target := sessionName + ":" + strconv.Itoa(windowIndex)
 	output, err := exec.Output("list-panes", "-t", target,
-		"-F", "#{pane_id}:#{pane_index}:#{pane_title}:#{pane_current_command}:#{pane_active}:#{pane_width}:#{pane_height}")
+		"-F", paneListFormat)
 	if err != nil {
 		return nil, err
 	}
@@ -215,25 +215,9 @@ func listPanesWithExecutor(exec TmuxExecutor, sessionName string, windowIndex in
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, ":", 7)
-		if len(parts) < 7 {
-			continue
+		if pane, ok := parsePaneLine(target, line); ok {
+			panes = append(panes, pane)
 		}
-		idx, _ := strconv.Atoi(parts[1])
-		width, _ := strconv.Atoi(parts[5])
-		height, _ := strconv.Atoi(parts[6])
-
-		paneTarget := target + "." + parts[1]
-		panes = append(panes, Pane{
-			ID:      parts[0],
-			Index:   idx,
-			Title:   parts[2],
-			Command: parts[3],
-			Active:  parts[4] == "1",
-			Width:   width,
-			Height:  height,
-			Target:  paneTarget,
-		})
 	}
 	return panes, nil
 }
@@ -321,11 +305,37 @@ func listWindows(sessionName string) ([]Window, error) {
 	return windows, nil
 }
 
+// paneListFormat is tab-separated because pane titles are free text: Claude
+// Code titles such as "Fix: login bug" would shift every later field if the
+// separator were a colon.
+const paneListFormat = "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}\t#{pane_active}\t#{pane_width}\t#{pane_height}"
+
+// parsePaneLine parses one line of paneListFormat output for a pane in target.
+func parsePaneLine(target, line string) (Pane, bool) {
+	parts := strings.Split(line, "\t")
+	if len(parts) != 7 {
+		return Pane{}, false
+	}
+	idx, _ := strconv.Atoi(parts[1])
+	width, _ := strconv.Atoi(parts[5])
+	height, _ := strconv.Atoi(parts[6])
+	return Pane{
+		ID:      parts[0],
+		Index:   idx,
+		Title:   parts[2],
+		Command: parts[3],
+		Active:  parts[4] == "1",
+		Width:   width,
+		Height:  height,
+		Target:  target + "." + parts[1],
+	}, true
+}
+
 // listPanes returns all panes for a window
 func listPanes(sessionName string, windowIndex int) ([]Pane, error) {
 	target := sessionName + ":" + strconv.Itoa(windowIndex)
 	cmd := exec.Command("tmux", "list-panes", "-t", target,
-		"-F", "#{pane_id}:#{pane_index}:#{pane_title}:#{pane_current_command}:#{pane_active}:#{pane_width}:#{pane_height}")
+		"-F", paneListFormat)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -336,25 +346,9 @@ func listPanes(sessionName string, windowIndex int) ([]Pane, error) {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, ":", 7)
-		if len(parts) < 7 {
-			continue
+		if pane, ok := parsePaneLine(target, line); ok {
+			panes = append(panes, pane)
 		}
-		idx, _ := strconv.Atoi(parts[1])
-		width, _ := strconv.Atoi(parts[5])
-		height, _ := strconv.Atoi(parts[6])
-
-		paneTarget := target + "." + parts[1]
-		panes = append(panes, Pane{
-			ID:      parts[0],
-			Index:   idx,
-			Title:   parts[2],
-			Command: parts[3],
-			Active:  parts[4] == "1",
-			Width:   width,
-			Height:  height,
-			Target:  paneTarget,
-		})
 	}
 	return panes, nil
 }
