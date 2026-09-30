@@ -228,8 +228,8 @@ func TestOnboardKeybindToggle(t *testing.T) {
 
 func TestOnboardKeybindInitializesOptions(t *testing.T) {
 	m := newOnboardModel()
-	if len(m.keybindOptions) != 2 {
-		t.Fatalf("expected 2 keybind options, got %d", len(m.keybindOptions))
+	if len(m.keybindOptions) != 3 {
+		t.Fatalf("expected 3 keybind options, got %d", len(m.keybindOptions))
 	}
 	if m.keybindOptions[0].key != "S" {
 		t.Fatalf("expected first option key to be 'S', got '%s'", m.keybindOptions[0].key)
@@ -294,11 +294,16 @@ func TestOnboardKeybindAddWritesToFile(t *testing.T) {
 	if !strings.Contains(s, `bind-key s run-shell "atmux sessions -p"`) {
 		t.Fatal("expected sessions binding in output")
 	}
-	if !m.browseBindAdded {
-		t.Fatal("expected browseBindAdded to be true")
+	if !strings.Contains(s, `bind-key a run-shell "atmux agents"`) {
+		t.Fatal("expected agents binding in output")
 	}
-	if !m.sessionsBindAdded {
-		t.Fatal("expected sessionsBindAdded to be true")
+	for _, opt := range m.keybindOptions {
+		if !opt.added {
+			t.Fatalf("expected %s to be marked added", opt.label)
+		}
+	}
+	if got := len(m.addedBindings()); got != 3 {
+		t.Fatalf("expected 3 added bindings reported, got %d", got)
 	}
 }
 
@@ -314,9 +319,10 @@ func TestOnboardKeybindSkipDoesNotWrite(t *testing.T) {
 	m := newOnboardModel()
 	m.step = 4
 
-	// Disable both bindings and call addKeybindings
-	m.keybindOptions[0].enabled = false
-	m.keybindOptions[1].enabled = false
+	// Disable every binding and call addKeybindings
+	for i := range m.keybindOptions {
+		m.keybindOptions[i].enabled = false
+	}
 
 	if err := m.addKeybindings(); err != nil {
 		t.Fatalf("addKeybindings failed: %v", err)
@@ -328,7 +334,7 @@ func TestOnboardKeybindSkipDoesNotWrite(t *testing.T) {
 	}
 	s := string(content)
 	if strings.Contains(s, "atmux") {
-		t.Fatal("expected no atmux bindings when both disabled")
+		t.Fatal("expected no atmux bindings when all are disabled")
 	}
 }
 
@@ -361,7 +367,7 @@ func TestOnboardKeybindIdempotent(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("expected exactly 1 browse binding, got %d", count)
 	}
-	if !m.browseBindAdded {
-		t.Fatal("expected browseBindAdded to be true even for existing binding")
+	if !m.keybindOptions[0].added {
+		t.Fatal("expected the browse binding to count as added even when it already existed")
 	}
 }

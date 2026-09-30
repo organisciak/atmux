@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -19,17 +20,20 @@ var (
 
 var keybindCmd = &cobra.Command{
 	Use:   "keybind",
-	Short: "Add a tmux keybinding for the session browser popup",
-	Long: `Adds a keybinding to ~/.tmux.conf that opens the atmux session browser.
+	Short: "Add a tmux keybinding for an atmux popup",
+	Long: `Adds a keybinding to ~/.tmux.conf that opens an atmux popup, and binds it
+in the running tmux server so it works immediately.
 
-By default, binds prefix + S to open the sessions popup.
-The binding can be customized with --key.
+Each command has a default key; --key overrides it.
+  browse    prefix + S   tree-style session browser
+  sessions  prefix + s   quick session list
+  agents    prefix + a   every Claude session's state and recap
 
 Examples:
-  atmux keybind              # Adds: bind-key S run-shell "atmux browse"
-  atmux keybind --key T      # Adds: bind-key T run-shell "atmux browse"
-  atmux keybind --key C-s    # Adds: bind-key C-s run-shell "atmux browse"
-  atmux keybind -y           # Skip confirmation
+  atmux keybind                      # Adds: bind-key S run-shell "atmux browse"
+  atmux keybind --command agents     # Adds: bind-key a run-shell "atmux agents"
+  atmux keybind --key T              # Adds: bind-key T run-shell "atmux browse"
+  atmux keybind --command agents -y  # No prompts; for install scripts
 
 Subcommands:
   atmux keybind show         # Print the keybinding snippet (ready to copy-paste)
@@ -50,7 +54,8 @@ dotfiles repository.
 Examples:
   atmux keybind show                  # Show default binding (prefix + S)
   atmux keybind show --key T          # Show binding for prefix + T
-  atmux keybind show --command sessions  # Show binding for sessions command`,
+  atmux keybind show --command sessions  # Show binding for sessions command
+  atmux keybind show --command agents    # Show binding for the agents overview`,
 	Run: runKeybindShow,
 }
 
@@ -58,24 +63,59 @@ func init() {
 	rootCmd.AddCommand(keybindCmd)
 	keybindCmd.Flags().StringVarP(&keybindKey, "key", "k", "S", "Key to bind (e.g., S, C-s, M-s)")
 	keybindCmd.Flags().BoolVarP(&keybindYes, "yes", "y", false, "Skip confirmation prompt")
-	keybindCmd.Flags().StringVar(&keybindCommand, "command", "browse", "Command to run (browse or sessions)")
+	keybindCmd.Flags().StringVar(&keybindCommand, "command", "browse", "Command to run (browse, sessions, or agents)")
 
 	// Add show subcommand
 	keybindCmd.AddCommand(keybindShowCmd)
 	keybindShowCmd.Flags().StringVarP(&keybindKey, "key", "k", "S", "Key to bind (e.g., S, C-s, M-s)")
-	keybindShowCmd.Flags().StringVar(&keybindCommand, "command", "browse", "Command to run (browse or sessions)")
+	keybindShowCmd.Flags().StringVar(&keybindCommand, "command", "browse", "Command to run (browse, sessions, or agents)")
+}
+
+// keybindTarget is a command atmux knows how to bind.
+type keybindTarget struct {
+	defaultKey  string
+	description string
+}
+
+var keybindTargets = map[string]keybindTarget{
+	"browse":   {"S", "open session browser popup"},
+	"sessions": {"s", "open session list popup"},
+	// Next to s on the keyboard, and unbound in stock tmux.
+	"agents": {"a", "open agents overview (state and recap of every Claude session)"},
+}
+
+// resolveKeybind validates --command and applies its default key unless
+// --key was given.
+func resolveKeybind(cmd *cobra.Command) (keybindTarget, error) {
+	target, ok := keybindTargets[keybindCommand]
+	if !ok {
+		return keybindTarget{}, fmt.Errorf("--command must be 'browse', 'sessions', or 'agents'")
+	}
+	if !cmd.Flags().Changed("key") {
+		keybindKey = target.defaultKey
+	}
+	return target, nil
+}
+
+// bindLive applies the binding to the running tmux server, if there is one,
+// so it works without reloading the config. Reports whether it did.
+func bindLive(key, command string) bool {
+	if exec.Command("tmux", "has-session").Run() != nil {
+		return false
+	}
+	return exec.Command("tmux", "bind-key", key, "run-shell", command).Run() == nil
 }
 
 func runKeybindShow(cmd *cobra.Command, args []string) {
-	// Validate command
-	if keybindCommand != "browse" && keybindCommand != "sessions" {
-		fmt.Fprintf(os.Stderr, "Error: --command must be 'browse' or 'sessions'\n")
+	target, err := resolveKeybind(cmd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Build the binding line
 	bindingLine := fmt.Sprintf("bind-key %s run-shell \"atmux %s\"", keybindKey, keybindCommand)
-	commentLine := "# atmux: open session browser popup"
+	commentLine := "# atmux: " + target.description
 
 	fmt.Println("# Add this to ~/.tmux.conf:")
 	fmt.Println(commentLine)
@@ -83,7 +123,7 @@ func runKeybindShow(cmd *cobra.Command, args []string) {
 	fmt.Println()
 	fmt.Println("# Then reload your config:")
 	fmt.Println("# tmux source-file ~/.tmux.conf")
-	fmt.Printf("#\n# Press prefix + %s to open the session browser.\n", keybindKey)
+	fmt.Printf("#\n# Press prefix + %s to %s.\n", keybindKey, target.description)
 }
 
 func runKeybind(cmd *cobra.Command, args []string) error {
@@ -94,14 +134,14 @@ func runKeybind(cmd *cobra.Command, args []string) error {
 	}
 	tmuxConfPath := filepath.Join(home, ".tmux.conf")
 
-	// Validate command
-	if keybindCommand != "browse" && keybindCommand != "sessions" {
-		return fmt.Errorf("--command must be 'browse' or 'sessions'")
+	target, err := resolveKeybind(cmd)
+	if err != nil {
+		return err
 	}
 
 	// Build the binding line
 	bindingLine := fmt.Sprintf("bind-key %s run-shell \"atmux %s\"", keybindKey, keybindCommand)
-	commentLine := "# atmux: open session browser popup"
+	commentLine := "# atmux: " + target.description
 	fullBinding := fmt.Sprintf("\n%s\n%s\n", commentLine, bindingLine)
 
 	// Read existing config (if any)
@@ -132,6 +172,9 @@ func runKeybind(cmd *cobra.Command, args []string) error {
 	if strings.Contains(existingContent, bindingLine) {
 		fmt.Printf("Binding already exists in %s:\n", tmuxConfPath)
 		fmt.Printf("  %s\n", bindingLine)
+		if bindLive(keybindKey, "atmux "+keybindCommand) {
+			fmt.Println("Bound in the running tmux server too.")
+		}
 		return nil
 	}
 
@@ -160,9 +203,12 @@ func runKeybind(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\n✓ Keybinding added to %s\n", tmuxConfPath)
-	fmt.Println("\nTo activate, run:")
-	fmt.Println("  tmux source-file ~/.tmux.conf")
-	fmt.Printf("\nThen press prefix + %s to open the session browser.\n", keybindKey)
+	if bindLive(keybindKey, "atmux "+keybindCommand) {
+		fmt.Printf("\nActive now: press prefix + %s to %s.\n", keybindKey, target.description)
+	} else {
+		fmt.Println("\nTo activate, start tmux or run:")
+		fmt.Println("  tmux source-file ~/.tmux.conf")
+	}
 
 	return nil
 }

@@ -36,13 +36,10 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 		}
 
 		// Show keybinding results
-		if result.BrowseBindAdded || result.SessionsBindAdded {
+		if len(result.AddedBindings) > 0 {
 			fmt.Println("\nKeybindings added to ~/.tmux.conf!")
-			if result.BrowseBindAdded {
-				fmt.Println("  prefix + S → atmux browse --popup (tree-style session browser)")
-			}
-			if result.SessionsBindAdded {
-				fmt.Println("  prefix + s → atmux sessions -p (quick session list popup)")
+			for _, b := range result.AddedBindings {
+				fmt.Println("  " + b)
 			}
 			fmt.Println("\nTo activate, run:")
 			fmt.Println("  tmux source-file ~/.tmux.conf")

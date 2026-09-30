@@ -16,6 +16,13 @@ Claude Code sessions  1 needs input  2 ready  1 working  7 dormant
 ╰──────────────────────────────────────╯╰──────────────────────────────────────╯
 ```
 
+`prefix + a` opens it from anywhere in tmux. `atmux onboard` offers that
+binding on a new install; to add it directly (or from a setup script):
+
+```sh
+atmux keybind --command agents -y   # writes ~/.tmux.conf and binds it live
+```
+
 Inside tmux it opens as a popup (`--no-popup` to run it in place). Cards keep
 their positions as states change, so what you are about to click does not
 move under the pointer. It refreshes every two seconds.

@@ -15,12 +15,12 @@ import (
 
 // OnboardResult contains the outcome of the onboard interaction.
 type OnboardResult struct {
-	Completed         bool
-	Agents            []config.AgentConfig
-	KeybindAdded      bool
-	KeybindError      string
-	BrowseBindAdded   bool // prefix+S → atmux browse --popup
-	SessionsBindAdded bool // prefix+s → atmux sessions -p
+	Completed    bool
+	Agents       []config.AgentConfig
+	KeybindError string
+	// AddedBindings describes each binding now in ~/.tmux.conf, e.g.
+	// "prefix + a → atmux agents (...)".
+	AddedBindings []string
 }
 
 // RunOnboard runs the interactive onboard TUI.
@@ -33,12 +33,10 @@ func RunOnboard() (*OnboardResult, error) {
 	}
 	if model, ok := finalModel.(onboardModel); ok {
 		return &OnboardResult{
-			Completed:         model.completed,
-			Agents:            model.buildAgents(),
-			KeybindAdded:      model.browseBindEnabled || model.sessionsBindEnabled,
-			KeybindError:      model.keybindError,
-			BrowseBindAdded:   model.browseBindAdded,
-			SessionsBindAdded: model.sessionsBindAdded,
+			Completed:     model.completed,
+			Agents:        model.buildAgents(),
+			KeybindError:  model.keybindError,
+			AddedBindings: model.addedBindings(),
 		}, nil
 	}
 	return &OnboardResult{}, nil
@@ -62,6 +60,7 @@ type keybindOption struct {
 	conflict    string // existing binding for this key (empty if none)
 	isDefault   bool   // true if this conflicts with a tmux default binding
 	defaultDesc string // description of the default tmux binding
+	added       bool   // present in ~/.tmux.conf after addKeybindings
 }
 
 type onboardModel struct {
@@ -74,11 +73,7 @@ type onboardModel struct {
 	keybindError string
 
 	// Keybinding step (step 4)
-	keybindOptions      []keybindOption // available bindings to offer
-	browseBindEnabled   bool
-	sessionsBindEnabled bool
-	browseBindAdded     bool
-	sessionsBindAdded   bool
+	keybindOptions []keybindOption // available bindings to offer
 
 	// Command editing in the review step
 	editingCommands bool              // true when in command edit mode
@@ -114,6 +109,18 @@ func newOnboardModel() onboardModel {
 		sessionsOpt.conflict = cmd
 	}
 
+	// Next to s on the keyboard, and unbound in stock tmux.
+	agentsOpt := keybindOption{
+		key:         "a",
+		command:     "atmux agents",
+		label:       "prefix + a",
+		description: "Opens the agents overview: every Claude session's state and recap",
+		enabled:     true,
+	}
+	if cmd, ok := existingBindings["a"]; ok {
+		agentsOpt.conflict = cmd
+	}
+
 	return onboardModel{
 		step: 0,
 		agents: []agentChoice{
@@ -121,7 +128,7 @@ func newOnboardModel() onboardModel {
 			{name: "Codex", command: "codex", enabled: false, yolo: true},
 			{name: "Gemini CLI", command: "gemini", enabled: false, yolo: false},
 		},
-		keybindOptions: []keybindOption{browseOpt, sessionsOpt},
+		keybindOptions: []keybindOption{browseOpt, sessionsOpt, agentsOpt},
 	}
 }
 
@@ -812,30 +819,19 @@ func (m *onboardModel) addKeybindings() error {
 
 	// Build all selected binding lines
 	var toAdd []string
-	for i, opt := range m.keybindOptions {
+	for i := range m.keybindOptions {
+		opt := &m.keybindOptions[i]
 		if !opt.enabled {
 			continue
 		}
 		bindingLine := fmt.Sprintf("bind-key %s run-shell \"%s\"", opt.key, opt.command)
-		// Skip if exact binding already exists
+		// An exact binding already present counts as added.
+		opt.added = true
 		if strings.Contains(existingContent, bindingLine) {
-			// Mark as added anyway since it's already there
-			if i == 0 {
-				m.browseBindAdded = true
-			} else {
-				m.sessionsBindAdded = true
-			}
 			continue
 		}
 		commentLine := fmt.Sprintf("# atmux: %s (%s)", opt.label, opt.description)
 		toAdd = append(toAdd, commentLine, bindingLine)
-		if i == 0 {
-			m.browseBindAdded = true
-			m.browseBindEnabled = true
-		} else {
-			m.sessionsBindAdded = true
-			m.sessionsBindEnabled = true
-		}
 	}
 
 	if len(toAdd) == 0 {
@@ -855,6 +851,17 @@ func (m *onboardModel) addKeybindings() error {
 	}
 
 	return nil
+}
+
+// addedBindings describes the bindings addKeybindings left in ~/.tmux.conf.
+func (m onboardModel) addedBindings() []string {
+	var added []string
+	for _, opt := range m.keybindOptions {
+		if opt.added {
+			added = append(added, fmt.Sprintf("%s → %s", opt.label, opt.command))
+		}
+	}
+	return added
 }
 
 // findDuplicateKeybinding checks if the key is already bound in the config
