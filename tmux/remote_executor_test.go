@@ -11,7 +11,7 @@ import (
 func TestBuildSSHInteractiveArgs_DefaultPort(t *testing.T) {
 	e := NewRemoteExecutor("user@devbox", 22, "ssh", "devbox")
 	got := e.buildSSHInteractiveArgs("attach-session", "-t", "mysess")
-	want := []string{"-t", "-p", "22", "user@devbox", "tmux", "attach-session", "-t", "mysess"}
+	want := []string{"-t", "-p", "22", "user@devbox", `tmux 'attach-session' '-t' 'mysess'`}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("buildSSHInteractiveArgs mismatch\n got: %v\nwant: %v", got, want)
 	}
@@ -20,7 +20,7 @@ func TestBuildSSHInteractiveArgs_DefaultPort(t *testing.T) {
 func TestBuildSSHInteractiveArgs_CustomPort(t *testing.T) {
 	e := NewRemoteExecutor("user@devbox", 2222, "ssh", "devbox")
 	got := e.buildSSHInteractiveArgs("attach-session", "-t", "work")
-	want := []string{"-t", "-p", "2222", "user@devbox", "tmux", "attach-session", "-t", "work"}
+	want := []string{"-t", "-p", "2222", "user@devbox", `tmux 'attach-session' '-t' 'work'`}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("buildSSHInteractiveArgs mismatch\n got: %v\nwant: %v", got, want)
 	}
@@ -46,7 +46,7 @@ func TestBuildSSHInteractiveArgs_ReusesControlSocket(t *testing.T) {
 		"-o", "ControlMaster=auto",
 		"-o", "ControlPath=/tmp/atmux-1/ssh/abc.sock",
 		"-o", "ControlPersist=4h",
-		"-p", "22", "user@devbox", "tmux", "attach-session", "-t", "work",
+		"-p", "22", "user@devbox", `tmux 'attach-session' '-t' 'work'`,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("buildSSHInteractiveArgs mismatch\n got: %v\nwant: %v", got, want)
@@ -251,5 +251,61 @@ func TestIsRemote(t *testing.T) {
 	e := NewRemoteExecutor("host", 22, "ssh", "")
 	if !e.IsRemote() {
 		t.Fatal("expected IsRemote() to be true")
+	}
+}
+
+// A host whose non-login PATH lacks tmux gets its attach wrapped in `bash -lc`.
+// That wrapper must reach ssh as ONE argument: ssh joins everything after the
+// host with spaces before handing it to the remote shell, so the split form
+// {"bash", "-lc", "<cmd>"} arrives as `bash -lc tmux 'attach-session' ...`,
+// where bash -c takes only `tmux` as its script and binds the rest to $0/$1/$2.
+// The result is a bare `tmux`, which creates a new numeric session instead of
+// attaching to the requested one.
+func TestBuildSSHInteractiveArgs_LoginShellStaysOneArgument(t *testing.T) {
+	e := NewRemoteExecutor("user@vps", 22, "ssh", "vps")
+	e.setShellMode(remoteShellLogin)
+
+	got := e.buildSSHInteractiveArgs("attach-session", "-t", "9")
+
+	hostIdx := -1
+	for i, a := range got {
+		if a == "user@vps" {
+			hostIdx = i
+		}
+	}
+	if hostIdx == -1 {
+		t.Fatalf("host missing from args: %v", got)
+	}
+
+	remote := got[hostIdx+1:]
+	if len(remote) != 1 {
+		t.Fatalf("remote command must be a single ssh argument, got %d: %v", len(remote), remote)
+	}
+	if !strings.HasPrefix(remote[0], loginShellFallback+" -lc ") {
+		t.Fatalf("expected a login-shell wrapper, got %q", remote[0])
+	}
+
+	script := strings.TrimPrefix(remote[0], loginShellFallback+" -lc ")
+	if !strings.HasPrefix(script, "'") || !strings.HasSuffix(script, "'") {
+		t.Fatalf("script must be quoted as one shell word, got %q", script)
+	}
+	if !strings.Contains(script, "attach-session") || !strings.Contains(script, "9") {
+		t.Fatalf("script lost its tmux arguments: %q", script)
+	}
+}
+
+// mosh preserves argv boundaries (it shell-quotes each element when building the
+// mosh-server invocation, which then execs the vector directly), so its
+// login-shell form stays split — the opposite of the ssh case above.
+func TestBuildMoshArgs_LoginShellKeepsSeparateArgv(t *testing.T) {
+	e := NewRemoteExecutor("user@vps", 22, "mosh", "vps")
+	e.setShellMode(remoteShellLogin)
+
+	got := e.buildMoshArgs("attach-session", "-t", "9")
+
+	want := []string{"user@vps", "--", loginShellFallback, "-lc",
+		remoteCommand("tmux", []string{"attach-session", "-t", "9"})}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("buildMoshArgs mismatch\n got: %v\nwant: %v", got, want)
 	}
 }

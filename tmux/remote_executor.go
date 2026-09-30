@@ -397,6 +397,13 @@ func (e *RemoteExecutor) Interactive(args ...string) error {
 //
 // shellMode decides how tmux is invoked: on a host whose non-login PATH lacks
 // tmux, the attach has to go through a login shell or it fails immediately.
+//
+// The remote command must be ONE argument. ssh does not preserve argv: it joins
+// everything after the host with spaces and feeds the result to the remote login
+// shell. Passing {"bash", "-lc", "tmux 'attach-session' '-t' 'x'"} as three args
+// therefore arrives as `bash -lc tmux 'attach-session' '-t' 'x'`, where bash -c
+// takes only `tmux` as the script and binds the rest to $0/$1/$2 — running bare
+// `tmux`, which creates a new numeric session instead of attaching.
 func (e *RemoteExecutor) buildSSHInteractiveArgs(args ...string) []string {
 	sshArgs := []string{
 		"-t", // Force pseudo-terminal
@@ -410,10 +417,7 @@ func (e *RemoteExecutor) buildSSHInteractiveArgs(args ...string) []string {
 	}
 	sshArgs = append(sshArgs, "-p", strconv.Itoa(e.Port), e.Host)
 
-	if e.shellMode() == remoteShellLogin {
-		return append(sshArgs, loginShellFallback, "-lc", remoteCommand("tmux", args))
-	}
-	return append(sshArgs, append([]string{"tmux"}, args...)...)
+	return append(sshArgs, wrapRemoteCommand(e.shellMode(), "tmux", args))
 }
 
 func (e *RemoteExecutor) interactiveSSH(args ...string) error {
@@ -436,6 +440,11 @@ func (e *RemoteExecutor) interactiveSSH(args ...string) error {
 
 // buildMoshArgs constructs the argument list for an interactive mosh attach.
 // As with SSH, a host whose non-login PATH lacks tmux needs a login shell.
+//
+// Unlike buildSSHInteractiveArgs, the command stays as separate argv elements.
+// mosh shell-quotes each element when it builds the mosh-server invocation, and
+// mosh-server execs the command vector directly, so argv boundaries survive —
+// collapsing them into one string here would run the whole thing as a filename.
 func (e *RemoteExecutor) buildMoshArgs(args ...string) []string {
 	moshArgs := []string{e.Host, "--"}
 	if e.shellMode() == remoteShellLogin {
