@@ -43,6 +43,7 @@ brew uninstall atmux agent-tmux
 
 - Save and revive projects. atmux keeps a recent history of projects you ran, so you can jump back in with `atmux sessions`, `atmux recents`, or `atmux open`.
 - Move between sessions fast. The sessions list is a quick, clickable way to attach without hunting for names.
+- See every agent at a glance. `atmux agents` shows each Claude Code session as a card: working, needs input, ready, or gone quiet, with Claude's latest recap. Click one to jump to it.
 - Control everything from one screen. `atmux browse` shows a tree of sessions, windows, and panes, lets you preview output, and send commands/escape to any pane without switching away.
 - Work across hosts. `atmux sessions --remote`, `atmux browse --remote`, and `atmux send --remote` support remote tmux workflows over SSH/mosh.
 - Customize per project. Add a `.agent-tmux.conf` and define exactly which windows and panes you want for that repo.
@@ -102,6 +103,8 @@ atmux sessions -p                       # Force popup sessions picker
 atmux browse                            # Tree browser with pane previews and command send
 atmux browse --remote=devbox            # Include remote host(s) in browse tree
 atmux recents                           # Browse and revive recent sessions
+atmux agents                            # Grid of every Claude session: state + recap, click to jump
+atmux agents --json                     # Agent states for scripts (status lights, MIDI pads)
 atmux open                              # Quick numbered selector for active/recent sessions
 atmux send TARGET TXT                   # Send text to a local target pane
 atmux send --remote=devbox TARGET TXT   # Send to target pane on remote host(s)
