@@ -61,6 +61,8 @@ type RemoteExecutor struct {
 	backoff      time.Duration
 	lastVerified time.Time // When the control master was last confirmed alive
 	atmux        remoteAtmuxMode
+	// agentsUnsupported records a host whose atmux has no `agents` command.
+	agentsUnsupported bool
 	shell        remoteShellMode
 }
 

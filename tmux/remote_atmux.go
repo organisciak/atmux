@@ -71,3 +71,34 @@ func (e *RemoteExecutor) setAtmuxMode(mode remoteAtmuxMode) {
 func (e *RemoteExecutor) RemoteAtmuxAvailable() bool {
 	return e.atmuxMode() == remoteAtmuxAvailable
 }
+
+// agentsViaAtmux asks a remote atmux for its agent panes. Only the host can
+// read its Claude registry and transcripts, so this is the only way remote
+// agents get exact states and recaps; without it they are read off the screen.
+//
+// A host whose atmux predates `agents` is remembered, so the overview's
+// refresh loop does not pay a failed round trip every tick.
+func (e *RemoteExecutor) agentsViaAtmux() ([]AgentPane, bool) {
+	e.mu.Lock()
+	unsupported := e.agentsUnsupported
+	e.mu.Unlock()
+	if unsupported || e.atmuxMode() == remoteAtmuxAbsent {
+		return nil, false
+	}
+
+	// --local stops the remote from fanning out to its own saved hosts.
+	out, err := e.RunGeneric("atmux", "agents", "--json", "--local")
+	if err == nil {
+		if agents, perr := ParseAgentsPayload(out, e); perr == nil {
+			return agents, true
+		}
+	}
+
+	// Unreachable is not unsupported: only give up on a host that answered.
+	if e.HostState().Status == HostOK {
+		e.mu.Lock()
+		e.agentsUnsupported = true
+		e.mu.Unlock()
+	}
+	return nil, false
+}

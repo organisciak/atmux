@@ -124,3 +124,9 @@ func looksLikeVersion(s string) bool {
 	}
 	return true
 }
+
+// LooksLikeVersion reports whether s is a semver-style string, which is what
+// Claude Code reports as its process name.
+func LooksLikeVersion(s string) bool {
+	return looksLikeVersion(s)
+}
