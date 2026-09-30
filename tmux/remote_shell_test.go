@@ -73,7 +73,10 @@ func TestBuildSSHInteractiveArgs_DirectWhenPathIsFine(t *testing.T) {
 	if strings.Contains(joined, "bash") {
 		t.Fatalf("a healthy PATH should not pay for a login shell, got %q", joined)
 	}
-	if !strings.HasSuffix(joined, "tmux attach-session -t work") {
+	// Quoted even on the direct path: the remote end is still a shell, and
+	// sharing wrapRemoteCommand with the non-interactive calls keeps one
+	// definition of how a tmux invocation is rendered for a remote host.
+	if !strings.HasSuffix(joined, `tmux 'attach-session' '-t' 'work'`) {
 		t.Fatalf("unexpected args: %q", joined)
 	}
 }
