@@ -184,8 +184,9 @@ func (m agentsModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.move(cols)
 	case "+", "=":
-		// Fewer, larger cards.
-		return m.setColumns(cols - 1)
+		// Fewer, larger cards; stop at one rather than wrap to 0, which
+		// means automatic.
+		return m.setColumns(max(1, cols-1))
 	case "-", "_":
 		return m.setColumns(cols + 1)
 	case "0":
@@ -357,7 +358,8 @@ func (m agentsModel) View() string {
 	if hidden := len(m.agents) - (last - first); hidden > 0 {
 		footer = fmt.Sprintf("%d more (scroll) · ", hidden) + footer
 	}
-	b.WriteString("\n" + agentsDimStyle.Render(footer))
+	// One line exactly: the height math reserves agentsFooterLines for it.
+	b.WriteString("\n" + agentsDimStyle.Render(ansi.Truncate(footer, m.width, "…")))
 	return b.String()
 }
 

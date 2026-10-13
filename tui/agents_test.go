@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/porganisciak/agent-tmux/claude"
 	"github.com/porganisciak/agent-tmux/tmux"
 )
@@ -113,11 +114,18 @@ func TestAgentsColumnKeysResizeAndClamp(t *testing.T) {
 	if m.columns() != 3 {
 		t.Fatalf("after + columns = %d, want 3", m.columns())
 	}
-	for i := 0; i < 10; i++ {
-		press("+")
+	press("+")
+	press("+")
+	if m.columns() != 1 || m.columnsOverride != 1 {
+		t.Fatalf("columns = %d (override %d), want 1", m.columns(), m.columnsOverride)
 	}
-	if m.columns() != 1 {
-		t.Fatalf("+ should stop at one column, got %d", m.columns())
+	atOne := len(saved)
+	press("+")
+	if m.columns() != 1 || m.columnsOverride != 1 {
+		t.Fatalf("+ at one column changed the layout: columns=%d override=%d", m.columns(), m.columnsOverride)
+	}
+	if len(saved) != atOne {
+		t.Fatalf("+ at one column saved a new size: %v", saved)
 	}
 	for i := 0; i < 20; i++ {
 		press("-")
@@ -181,5 +189,14 @@ func TestAgentCardSectionsReadOnWhenThereIsRoom(t *testing.T) {
 	cut := wrapCardBody(got, 40, 3)
 	if cut[2] != "▸ the prompt…" {
 		t.Fatalf("cut card should end in an ellipsis, got %q", cut)
+	}
+}
+
+func TestAgentsFooterFitsOnOneLine(t *testing.T) {
+	m := agentsModelWith(40, 60, 30)
+	m.executors = make([]tmux.TmuxExecutor, 2) // one host still loading
+	lines := strings.Split(m.View(), "\n")
+	if footer := lines[len(lines)-1]; lipgloss.Width(footer) > 60 {
+		t.Fatalf("footer wraps at width 60: %d cells", lipgloss.Width(footer))
 	}
 }
