@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 const sampleTranscript = `{"type":"user","message":{"role":"user","content":"Make the walls thicker"},"timestamp":"2026-09-25T15:00:00Z"}
@@ -91,5 +92,27 @@ func TestFirstParagraphSkipsHeadingsAndFences(t *testing.T) {
 	md := "```\ncode\n```\n# Title\n\nFirst **bold** line\ncontinues.\n\nSecond."
 	if got := FirstParagraph(md); got != "First bold line continues." {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSplitReplyKeepsStructureAfterTheOpening(t *testing.T) {
+	md := "Done, and **committed**.\n\n## Details\n\n- first `item`\n- second\n\n```go\ncode()\n```\nAfter the code."
+	first, more := splitReply(md)
+	if first != "Done, and committed." {
+		t.Errorf("first = %q", first)
+	}
+	want := "Details\n\n• first item\n• second\n\n[code]\nAfter the code."
+	if more != want {
+		t.Errorf("more = %q, want %q", more, want)
+	}
+}
+
+func TestSplitReplyCapsTheRest(t *testing.T) {
+	_, more := splitReply("Opening.\n\n" + strings.Repeat("é", maxReplyMore))
+	if len(more) > maxReplyMore+len("…") || !strings.HasSuffix(more, "…") {
+		t.Fatalf("rest not capped: %d bytes", len(more))
+	}
+	if !utf8.ValidString(more) {
+		t.Fatal("cap split a rune")
 	}
 }

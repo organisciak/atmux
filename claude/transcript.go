@@ -26,6 +26,10 @@ type Transcript struct {
 	// fallback for sessions whose recap is missing or out of date. Replies
 	// tend to lead with their conclusion, so the opening is the summary.
 	LastReply string
+	// ReplyMore is the rest of that reply as plain text, line structure kept,
+	// for views with room to show more than the opening. Capped at
+	// maxReplyMore bytes.
+	ReplyMore string
 
 	// Empty means the session has no conversation yet.
 	Empty bool
@@ -194,7 +198,7 @@ func scanTranscript(buf []byte, partial bool) Transcript {
 			}
 		case e.Type == "assistant" && e.Message != nil:
 			if t.LastReply == "" {
-				t.LastReply = replyText(e.Message.Content)
+				t.LastReply, t.ReplyMore = replyText(e.Message.Content)
 			}
 		}
 
@@ -244,44 +248,74 @@ func isTypedPrompt(s string) bool {
 	return s != "" && !strings.HasPrefix(s, "<")
 }
 
-func replyText(raw json.RawMessage) string {
+// maxReplyMore caps ReplyMore. Even a full-screen card holds a few thousand
+// characters, and the JSON payload carries this field for every agent.
+const maxReplyMore = 4000
+
+// replyText returns the opening paragraph of a reply and the rest of it.
+func replyText(raw json.RawMessage) (first, more string) {
 	var blocks []contentBlock
 	if json.Unmarshal(raw, &blocks) != nil {
-		return ""
+		return "", ""
 	}
+	var texts []string
 	for _, b := range blocks {
-		if b.Type == "text" {
-			if p := FirstParagraph(b.Text); p != "" {
-				return p
-			}
+		if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+			texts = append(texts, b.Text)
 		}
 	}
-	return ""
+	return splitReply(strings.Join(texts, "\n\n"))
 }
 
-// FirstParagraph returns the first paragraph of markdown as plain text,
-// skipping headings and code fences, with inline emphasis removed.
-func FirstParagraph(md string) string {
-	var para []string
-	inFence := false
+// splitReply separates markdown into its first paragraph and the remainder,
+// both as plain text. The remainder keeps one line per markdown line so lists
+// and paragraph breaks survive wrapping; code blocks are elided.
+func splitReply(md string) (first, more string) {
+	var para, rest []string
+	inFence, firstDone := false, false
 	for _, line := range strings.Split(md, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") {
+			if !inFence && firstDone {
+				rest = append(rest, "[code]")
+			}
 			inFence = !inFence
 			continue
 		}
 		if inFence {
 			continue
 		}
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			if len(para) > 0 {
-				break
+		if !firstDone {
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				if len(para) > 0 {
+					firstDone = true
+				}
+				continue
 			}
+			para = append(para, trimmed)
 			continue
 		}
-		para = append(para, trimmed)
+		trimmed = strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		if trimmed == "" && (len(rest) == 0 || rest[len(rest)-1] == "") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
+			trimmed = "• " + trimmed[2:]
+		}
+		rest = append(rest, plainInline(trimmed))
 	}
-	return plainInline(strings.Join(para, " "))
+	more = strings.TrimSpace(strings.Join(rest, "\n"))
+	if len(more) > maxReplyMore {
+		more = strings.ToValidUTF8(more[:maxReplyMore], "") + "…"
+	}
+	return plainInline(strings.Join(para, " ")), more
+}
+
+// FirstParagraph returns the first paragraph of markdown as plain text,
+// skipping headings and code fences, with inline emphasis removed.
+func FirstParagraph(md string) string {
+	first, _ := splitReply(md)
+	return first
 }
 
 var inlineMarkup = strings.NewReplacer("**", "", "__", "", "`", "")

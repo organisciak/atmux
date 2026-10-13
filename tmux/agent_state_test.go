@@ -73,7 +73,7 @@ func TestAgentsPayloadRoundTrip(t *testing.T) {
 		Status:     claude.StatusWaiting,
 		WaitingFor: "permission prompt",
 		Since:      now.Add(-2 * time.Minute),
-		Transcript: claude.Transcript{Recap: "Next: flash it.", RecapAt: now.Add(-time.Hour), LastPromptAt: now.Add(-2 * time.Hour)},
+		Transcript: claude.Transcript{Recap: "Next: flash it.", RecapAt: now.Add(-time.Hour), LastPromptAt: now.Add(-2 * time.Hour), ReplyMore: "• step one"},
 	}}
 	payload := BuildAgentsPayload(in, now)
 	if payload.Agents[0].Title != "Cube light" || payload.Agents[0].Activity != string(ActivityNeedsInput) || !payload.Agents[0].RecapCurrent {
@@ -92,6 +92,9 @@ func TestAgentsPayloadRoundTrip(t *testing.T) {
 	got := out[0]
 	if got.Host != "vps" || got.Executor != remote || got.Pane.ID != "%3" {
 		t.Fatalf("remote agent not attached to its host: %+v", got.ClaudePane)
+	}
+	if got.Transcript.ReplyMore != "• step one" {
+		t.Fatalf("reply text lost in round trip: %q", got.Transcript.ReplyMore)
 	}
 	if got.Activity(now) != ActivityNeedsInput || got.WaitingFor != "permission prompt" || !got.Transcript.RecapIsCurrent() {
 		t.Fatalf("state lost in round trip: %+v", got)

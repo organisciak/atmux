@@ -40,7 +40,9 @@ type AgentJSON struct {
 	LastPrompt   string `json:"last_prompt,omitempty"`
 	LastPromptAt string `json:"last_prompt_at,omitempty"`
 	LastReply    string `json:"last_reply,omitempty"`
-	Fresh        bool   `json:"fresh,omitempty"`
+	// LastReplyMore is the rest of the reply after LastReply.
+	LastReplyMore string `json:"last_reply_more,omitempty"`
+	Fresh         bool   `json:"fresh,omitempty"`
 }
 
 // BuildAgentsPayload converts agent panes to their JSON form.
@@ -50,25 +52,26 @@ func BuildAgentsPayload(agents []AgentPane, now time.Time) AgentsPayload {
 		_, title := SplitAgentTitle(a.Pane.Title)
 		t := a.Transcript
 		out.Agents = append(out.Agents, AgentJSON{
-			Host:         a.Host,
-			Session:      a.SessionName,
-			Window:       a.WindowName,
-			Pane:         a.Pane.ID,
-			Target:       a.Pane.Target,
-			Title:        title,
-			Activity:     string(a.Activity(now)),
-			Status:       string(a.Status),
-			WaitingFor:   a.WaitingFor,
-			Since:        formatJSONTime(a.Since),
-			SinceSeconds: secondsSince(a.Since, now),
-			SessionID:    a.Process.SessionID,
-			Recap:        t.Recap,
-			RecapAt:      formatJSONTime(t.RecapAt),
-			RecapCurrent: t.RecapIsCurrent(),
-			LastPrompt:   t.LastPrompt,
-			LastPromptAt: formatJSONTime(t.LastPromptAt),
-			LastReply:    t.LastReply,
-			Fresh:        t.Empty,
+			Host:          a.Host,
+			Session:       a.SessionName,
+			Window:        a.WindowName,
+			Pane:          a.Pane.ID,
+			Target:        a.Pane.Target,
+			Title:         title,
+			Activity:      string(a.Activity(now)),
+			Status:        string(a.Status),
+			WaitingFor:    a.WaitingFor,
+			Since:         formatJSONTime(a.Since),
+			SinceSeconds:  secondsSince(a.Since, now),
+			SessionID:     a.Process.SessionID,
+			Recap:         t.Recap,
+			RecapAt:       formatJSONTime(t.RecapAt),
+			RecapCurrent:  t.RecapIsCurrent(),
+			LastPrompt:    t.LastPrompt,
+			LastPromptAt:  formatJSONTime(t.LastPromptAt),
+			LastReply:     t.LastReply,
+			LastReplyMore: t.ReplyMore,
+			Fresh:         t.Empty,
 		})
 	}
 	return out
@@ -106,6 +109,7 @@ func ParseAgentsPayload(data []byte, exec TmuxExecutor) ([]AgentPane, error) {
 				LastPrompt:   j.LastPrompt,
 				LastPromptAt: parseJSONTime(j.LastPromptAt),
 				LastReply:    j.LastReply,
+				ReplyMore:    j.LastReplyMore,
 				Empty:        j.Fresh,
 			},
 		})
