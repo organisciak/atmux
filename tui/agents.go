@@ -14,6 +14,12 @@ import (
 // AgentsOptions configures the agents overview.
 type AgentsOptions struct {
 	Executors []tmux.TmuxExecutor
+	// Columns fixes the number of card columns; 0 fits as many as the width
+	// allows.
+	Columns int
+	// OnColumnsChange is called when the user resizes the grid, so the choice
+	// can be remembered. Optional.
+	OnColumnsChange func(columns int)
 }
 
 // AgentsResult is the pane the user picked, if any.
@@ -25,7 +31,13 @@ type AgentsResult struct {
 
 // RunAgents shows the overview grid and returns the chosen pane.
 func RunAgents(opts AgentsOptions) (*AgentsResult, error) {
-	m := agentsModel{executors: opts.Executors, byHost: make([][]tmux.AgentPane, len(opts.Executors)), gens: make([]int, len(opts.Executors))}
+	m := agentsModel{
+		executors:       opts.Executors,
+		byHost:          make([][]tmux.AgentPane, len(opts.Executors)),
+		gens:            make([]int, len(opts.Executors)),
+		columnsOverride: max(0, opts.Columns),
+		onColumnsChange: opts.OnColumnsChange,
+	}
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	final, err := p.Run()
 	if err != nil {
@@ -45,11 +57,18 @@ const (
 	// agentsRefreshInterval is how often states are re-read. The registry is a
 	// handful of small files, so this can be brisk.
 	agentsRefreshInterval = 2 * time.Second
-	agentCardMinWidth     = 38
-	agentCardBodyLines    = 5
-	// Border (2) + status line + title line + body.
-	agentCardHeight   = 4 + agentCardBodyLines
-	agentsHeaderLines = 2
+	// agentCardMinWidth is the narrowest card the automatic layout uses.
+	agentCardMinWidth = 38
+	// agentCardNarrowest bounds how many columns the user can ask for.
+	agentCardNarrowest = 20
+	agentCardBodyLines = 5
+	// Card chrome: border (2) + status line + title line.
+	agentCardChrome = 4
+	// agentCardMinHeight is a card with agentCardBodyLines of text. Cards
+	// grow past it to fill the screen when every row fits.
+	agentCardMinHeight = agentCardChrome + agentCardBodyLines
+	agentsHeaderLines  = 2
+	agentsFooterLines  = 1
 )
 
 // Each host loads and refreshes on its own schedule, so a slow or unreachable
@@ -76,6 +95,10 @@ type agentsModel struct {
 	width, height int
 	selected      int
 	scrollRow     int
+
+	// columnsOverride is the user's chosen column count; 0 means automatic.
+	columnsOverride int
+	onColumnsChange func(int)
 
 	chosen *tmux.AgentPane
 }
@@ -160,6 +183,31 @@ func (m agentsModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.move(-cols)
 	case "down", "j":
 		m.move(cols)
+	case "+", "=":
+		// Fewer, larger cards.
+		return m.setColumns(cols - 1)
+	case "-", "_":
+		return m.setColumns(cols + 1)
+	case "0":
+		return m.setColumns(0)
+	}
+	return m, nil
+}
+
+// setColumns fixes the column count (0 = automatic), clamped to what the
+// width can hold.
+func (m agentsModel) setColumns(n int) (tea.Model, tea.Cmd) {
+	if n != 0 {
+		n = max(1, min(n, m.maxColumns()))
+	}
+	if n == m.columnsOverride {
+		return m, nil
+	}
+	m.columnsOverride = n
+	m.keepSelectionVisible()
+	if save := m.onColumnsChange; save != nil {
+		// Off the UI goroutine; remembering the size is best-effort.
+		return m, func() tea.Msg { save(n); return nil }
 	}
 	return m, nil
 }
@@ -211,11 +259,30 @@ func (m agentsModel) columns() int {
 	if m.width <= 0 {
 		return 1
 	}
+	if m.columnsOverride > 0 {
+		return min(m.columnsOverride, m.maxColumns())
+	}
 	return max(1, m.width/agentCardMinWidth)
 }
 
+func (m agentsModel) maxColumns() int {
+	return max(1, m.width/agentCardNarrowest)
+}
+
 func (m agentsModel) cardWidth() int {
-	return max(agentCardMinWidth, m.width/m.columns())
+	return max(1, m.width/m.columns())
+}
+
+// cardHeight is shared by every card so rows line up and a click maps back
+// to a card by division. When all rows fit at the minimum height, cards
+// stretch to fill the screen, so fewer columns means more text per card.
+func (m agentsModel) cardHeight() int {
+	avail := m.height - agentsHeaderLines - agentsFooterLines
+	rows := m.rows()
+	if rows == 0 || rows*agentCardMinHeight > avail {
+		return agentCardMinHeight
+	}
+	return avail / rows
 }
 
 func (m agentsModel) rows() int {
@@ -224,7 +291,7 @@ func (m agentsModel) rows() int {
 }
 
 func (m agentsModel) visibleRows() int {
-	return max(1, (m.height-agentsHeaderLines-1)/agentCardHeight)
+	return max(1, (m.height-agentsHeaderLines-agentsFooterLines)/m.cardHeight())
 }
 
 func (m *agentsModel) keepSelectionVisible() {
@@ -244,7 +311,7 @@ func (m agentsModel) cardAt(x, y int) (int, bool) {
 		return 0, false
 	}
 	col := x / m.cardWidth()
-	row := y/agentCardHeight + m.scrollRow
+	row := y/m.cardHeight() + m.scrollRow
 	if col >= m.columns() {
 		return 0, false
 	}
@@ -283,7 +350,7 @@ func (m agentsModel) View() string {
 	}
 	b.WriteString(strings.Join(rows, "\n"))
 
-	footer := "click or enter: jump · arrows: move · r: refresh · q: quit"
+	footer := "click or enter: jump · arrows: move · +/-: card size · 0: auto · r: refresh · q: quit"
 	if waiting := len(m.executors) - m.loaded; waiting > 0 {
 		footer = fmt.Sprintf("waiting on %d host(s) · ", waiting) + footer
 	}
@@ -328,22 +395,8 @@ func (m agentsModel) renderCard(i int, now time.Time) string {
 	_, title := tmux.SplitAgentTitle(a.Pane.Title)
 	titleLine := agentsDimStyle.Render(ansi.Truncate(title, inner, "…"))
 
-	body := AgentSummaryText(a)
-	if act == tmux.ActivityWorking && a.Transcript.LastPrompt != "" {
-		// A running turn is best described by what it was asked to do.
-		body = "▸ " + a.Transcript.LastPrompt
-	}
-	if body == "" {
-		body = placeholderSummary(act, a)
-	}
-	bodyLines := strings.Split(ansi.Wrap(strings.Join(strings.Fields(body), " "), inner, ""), "\n")
-	if len(bodyLines) > agentCardBodyLines {
-		bodyLines = bodyLines[:agentCardBodyLines]
-		bodyLines[agentCardBodyLines-1] = ansi.Truncate(bodyLines[agentCardBodyLines-1], inner-1, "") + "…"
-	}
-	for len(bodyLines) < agentCardBodyLines {
-		bodyLines = append(bodyLines, "")
-	}
+	bodyHeight := m.cardHeight() - agentCardChrome
+	bodyLines := wrapCardBody(agentCardSections(a, act), inner, bodyHeight)
 
 	border := lipgloss.RoundedBorder()
 	if i == m.selected {
@@ -354,6 +407,68 @@ func (m agentsModel) renderCard(i int, now time.Time) string {
 		BorderForeground(activityColor(act)).
 		Width(inner).
 		Render(strings.Join(append([]string{head, titleLine}, bodyLines...), "\n"))
+}
+
+// agentCardSections is what a card says, most important first; a small card
+// shows the first section, a large one reads on.
+func agentCardSections(a tmux.AgentPane, act tmux.Activity) []string {
+	t := a.Transcript
+	prompt := ""
+	if t.LastPrompt != "" {
+		prompt = "▸ " + t.LastPrompt
+	}
+	summary := AgentSummaryText(a)
+
+	var sections []string
+	switch {
+	case act == tmux.ActivityWorking:
+		// A running turn is best described by what it was asked to do.
+		sections = []string{prompt, summary}
+	case summary == t.LastReply:
+		sections = []string{t.LastReply, t.ReplyMore, prompt}
+	default:
+		// The recap leads; then what was asked and how Claude answered.
+		sections = []string{summary, prompt, t.LastReply, t.ReplyMore}
+	}
+
+	var out []string
+	for _, s := range sections {
+		if strings.TrimSpace(s) != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{placeholderSummary(act, a)}
+	}
+	return out
+}
+
+// wrapCardBody wraps sections to width, a blank line between them, and fits
+// the result to exactly height lines, ending in "…" when text was cut.
+func wrapCardBody(sections []string, width, height int) []string {
+	var lines []string
+	for i, section := range sections {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		for _, line := range strings.Split(section, "\n") {
+			line = strings.Join(strings.Fields(line), " ")
+			lines = append(lines, strings.Split(ansi.Wrap(line, width, ""), "\n")...)
+		}
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+		// Put the ellipsis on the last line of text, not on a section gap.
+		for len(lines) > 1 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+			lines = lines[:len(lines)-1]
+		}
+		last := strings.TrimRight(lines[len(lines)-1], " ")
+		lines[len(lines)-1] = ansi.Truncate(last, width-1, "") + "…"
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return lines
 }
 
 func placeholderSummary(act tmux.Activity, a tmux.AgentPane) string {

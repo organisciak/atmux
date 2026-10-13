@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/porganisciak/agent-tmux/config"
 	"github.com/porganisciak/agent-tmux/tmux"
 	"github.com/porganisciak/agent-tmux/tui"
 	"github.com/spf13/cobra"
@@ -32,7 +34,12 @@ Controls:
   Arrows/hjkl  Move between cards
   Enter/click  Jump to the pane
   r            Refresh now
-  q/Esc        Quit`,
+  + / -        Fewer, larger cards / more, smaller cards
+  0            Automatic size (as many columns as fit)
+  q/Esc        Quit
+
+The size chosen with + and - is remembered for next time; --columns sets it
+for one run.`,
 	RunE: runAgents,
 }
 
@@ -41,6 +48,7 @@ var (
 	agentsJSON    bool
 	agentsNoPopup bool
 	agentsRemote  string
+	agentsColumns int
 	agentsLocal   bool
 )
 
@@ -50,6 +58,7 @@ func init() {
 	agentsCmd.Flags().BoolVar(&agentsJSON, "json", false, "Print agent states as JSON")
 	agentsCmd.Flags().BoolVar(&agentsNoPopup, "no-popup", false, "Disable popup mode (default: popup when inside tmux)")
 	agentsCmd.Flags().StringVar(&agentsRemote, "remote", "", "Remote hosts to include (comma-separated aliases or hosts)")
+	agentsCmd.Flags().IntVarP(&agentsColumns, "columns", "c", 0, "Card columns for this run (default: last size chosen, else as many as fit)")
 	agentsCmd.Flags().BoolVar(&agentsLocal, "local", false, "Only this machine's agents, not saved remote hosts")
 }
 
@@ -74,13 +83,31 @@ func runAgents(cmd *cobra.Command, args []string) error {
 	}
 
 	if os.Getenv("TMUX") != "" && !agentsNoPopup {
+		var extra []string
 		if agentsRemote != "" {
-			return launchAsPopup("agents", "--remote", agentsRemote)
+			extra = append(extra, "--remote", agentsRemote)
 		}
-		return launchAsPopup("agents")
+		if cmd.Flags().Changed("columns") {
+			extra = append(extra, "--columns", strconv.Itoa(agentsColumns))
+		}
+		return launchAsPopup("agents", extra...)
 	}
 
-	result, err := tui.RunAgents(tui.AgentsOptions{Executors: executors})
+	columns := agentsColumns
+	if !cmd.Flags().Changed("columns") {
+		if settings, err := config.LoadSettings(); err == nil {
+			columns = settings.AgentsColumns
+		}
+	}
+	result, err := tui.RunAgents(tui.AgentsOptions{
+		Executors: executors,
+		Columns:   columns,
+		OnColumnsChange: func(n int) {
+			// Best-effort: a settings file we cannot write just means the
+			// size is not remembered.
+			_ = config.SaveAgentsColumns(n)
+		},
+	})
 	if err != nil {
 		return err
 	}

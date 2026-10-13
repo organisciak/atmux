@@ -27,6 +27,19 @@ Inside tmux it opens as a popup (`--no-popup` to run it in place). Cards keep
 their positions as states change, so what you are about to click does not
 move under the pointer. It refreshes every two seconds.
 
+## Card size
+
+Press `+` for fewer, larger cards and `-` for more, smaller ones; `0` goes
+back to automatic (as many 38-column cards as fit). The size you pick is
+remembered in `settings.json` for the next time you open the grid.
+`--columns N` sets it for a single run without changing what is remembered.
+
+Cards stretch to fill the screen whenever every row fits, so fewer columns
+means more text in each card. A small card shows the summary; a larger one
+reads on into what you last asked and the rest of Claude's reply. When there
+are more cards than fit, they stay at their minimum height and the grid
+scrolls.
+
 ## States
 
 | Activity      | Meaning                                                        |
@@ -69,7 +82,8 @@ atmux reads the most recent one from the transcript's tail.
 A recap describes the session as of when it was written. If you have sent a
 prompt since, the card shows the opening paragraph of Claude's latest reply
 instead, which is newer. Working sessions show the prompt they are working
-on. Transcripts are cached until they change, so idle sessions cost nothing
+on. Larger cards continue with the prompt and the rest of the reply (see
+Card size). Transcripts are cached until they change, so idle sessions cost nothing
 to refresh.
 
 ## Remote hosts
@@ -108,11 +122,16 @@ it: a status light, a menu bar item, a MIDI pad.
       "recap_current": true,
       "last_prompt": "…",
       "last_prompt_at": "…",
-      "last_reply": "…"
+      "last_reply": "…",
+      "last_reply_more": "…"
     }
   ]
 }
 ```
+
+`last_reply` is the opening paragraph of Claude's latest reply and
+`last_reply_more` the rest of it as plain text (lists kept one item per line,
+code blocks shown as `[code]`, capped at 4,000 bytes).
 
 `activity` is the field to map to colours. Fields other than `session`,
 `window`, `pane`, `target`, and `activity` are omitted when unknown. `schema`

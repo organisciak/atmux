@@ -87,6 +87,10 @@ type Settings struct {
 
 	// Staleness controls session staleness indicators in the sessions TUI.
 	Staleness *StalenessConfig `json:"staleness,omitempty"`
+
+	// AgentsColumns is the column count last chosen in `atmux agents`
+	// (0 = fit as many as the terminal width allows).
+	AgentsColumns int `json:"agents_columns,omitempty"`
 }
 
 // DefaultSettings returns settings with default values
@@ -195,6 +199,18 @@ func (s *Settings) Save() error {
 	}
 
 	return os.WriteFile(path, data, 0644)
+}
+
+// SaveAgentsColumns remembers the agents grid's column count. It refuses to
+// write when the existing settings cannot be read, rather than replacing them
+// with defaults.
+func SaveAgentsColumns(columns int) error {
+	settings, err := LoadSettings()
+	if err != nil {
+		return err
+	}
+	settings.AgentsColumns = columns
+	return settings.Save()
 }
 
 // ResetSettings resets settings to defaults
