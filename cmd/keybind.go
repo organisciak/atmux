@@ -63,12 +63,12 @@ func init() {
 	rootCmd.AddCommand(keybindCmd)
 	keybindCmd.Flags().StringVarP(&keybindKey, "key", "k", "S", "Key to bind (e.g., S, C-s, M-s)")
 	keybindCmd.Flags().BoolVarP(&keybindYes, "yes", "y", false, "Skip confirmation prompt")
-	keybindCmd.Flags().StringVar(&keybindCommand, "command", "browse", "Command to run (browse, sessions, or agents)")
+	keybindCmd.Flags().StringVar(&keybindCommand, "command", "browse", "Command to run (browse, sessions, agents, or tiles)")
 
 	// Add show subcommand
 	keybindCmd.AddCommand(keybindShowCmd)
 	keybindShowCmd.Flags().StringVarP(&keybindKey, "key", "k", "S", "Key to bind (e.g., S, C-s, M-s)")
-	keybindShowCmd.Flags().StringVar(&keybindCommand, "command", "browse", "Command to run (browse, sessions, or agents)")
+	keybindShowCmd.Flags().StringVar(&keybindCommand, "command", "browse", "Command to run (browse, sessions, agents, or tiles)")
 }
 
 // keybindTarget is a command atmux knows how to bind.
@@ -82,6 +82,8 @@ var keybindTargets = map[string]keybindTarget{
 	"sessions": {"s", "open session list popup"},
 	// Next to s on the keyboard, and unbound in stock tmux.
 	"agents": {"a", "open agents overview (state and recap of every Claude session)"},
+	// Unbound in stock tmux.
+	"tiles": {"T", "tile the most recent Claude Code panes side by side"},
 }
 
 // resolveKeybind validates --command and applies its default key unless
@@ -89,7 +91,7 @@ var keybindTargets = map[string]keybindTarget{
 func resolveKeybind(cmd *cobra.Command) (keybindTarget, error) {
 	target, ok := keybindTargets[keybindCommand]
 	if !ok {
-		return keybindTarget{}, fmt.Errorf("--command must be 'browse', 'sessions', or 'agents'")
+		return keybindTarget{}, fmt.Errorf("--command must be 'browse', 'sessions', 'agents', or 'tiles'")
 	}
 	if !cmd.Flags().Changed("key") {
 		keybindKey = target.defaultKey

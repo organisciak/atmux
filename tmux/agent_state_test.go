@@ -49,8 +49,8 @@ func TestScreenStatus(t *testing.T) {
 }
 
 func TestParseAgentPanesKeepsOnlyClaude(t *testing.T) {
-	out := "%1\twork\t0\tagents\t0\t✳ Fix: login bug\t2.1.283\t1\t4242\t1790789277\n" +
-		"%2\twork\t1\tdev\t0\thost\tzsh\t1\t4243\t1790789277\n"
+	out := "%1\twork\t0\tagents\t0\t✳ Fix: login bug\t2.1.283\t1\t4242\t1790789277\t\n" +
+		"%2\twork\t1\tdev\t0\thost\tzsh\t1\t4243\t1790789277\t\n"
 	rows := parseAgentPanes(out, NewLocalExecutor())
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
@@ -61,6 +61,14 @@ func TestParseAgentPanesKeepsOnlyClaude(t *testing.T) {
 	}
 	if !r.lastActivity.Equal(time.Unix(1790789277, 0)) {
 		t.Fatalf("last activity = %v", r.lastActivity)
+	}
+}
+
+func TestParseAgentPanesListsLentPanesUnderTheirHome(t *testing.T) {
+	out := "%1\t_atmux_tiles\t0\ttiles\t2\t✳ Fix: login bug\t2.1.283\t0\t4242\t1790789277\twork\n"
+	rows := parseAgentPanes(out, NewLocalExecutor())
+	if len(rows) != 1 || rows[0].pane.SessionName != "work" {
+		t.Fatalf("got %+v, want the pane listed under work", rows)
 	}
 }
 

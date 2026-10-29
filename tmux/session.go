@@ -383,7 +383,13 @@ func parseSessionLines(output string) []SessionLine {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		sessions = append(sessions, parseSessionLine(line))
+		parsed := parseSessionLine(line)
+		// The tiles view only exists while someone is looking at it, and
+		// killing it from a list would kill the panes it has borrowed.
+		if parsed.Name == TilesSessionName {
+			continue
+		}
+		sessions = append(sessions, parsed)
 	}
 	return sessions
 }

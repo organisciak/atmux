@@ -71,8 +71,9 @@ func (a AgentPane) Activity(now time.Time) Activity {
 }
 
 // agentPaneFormat lists every pane on a server in one call. Tab-separated
-// because titles are free text.
-const agentPaneFormat = "#{pane_id}\t#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}\t#{pane_active}\t#{pane_pid}\t#{window_activity}"
+// because titles are free text. The last field is set on a pane lent to the
+// tiles view, which is listed under the session it belongs to.
+const agentPaneFormat = "#{pane_id}\t#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}\t#{pane_active}\t#{pane_pid}\t#{window_activity}\t#{" + optTileHome + "}"
 
 // ListAgentPanes finds every Claude Code pane across executors and attaches
 // its state.
@@ -142,7 +143,7 @@ func parseAgentPanes(output string, exec TmuxExecutor) []agentPaneRow {
 	var rows []agentPaneRow
 	for _, line := range strings.Split(output, "\n") {
 		parts := strings.Split(strings.TrimRight(line, "\r"), "\t")
-		if len(parts) != 10 {
+		if len(parts) != 11 {
 			continue
 		}
 		index, _ := strconv.Atoi(parts[4])
@@ -158,10 +159,14 @@ func parseAgentPanes(output string, exec TmuxExecutor) []agentPaneRow {
 			continue
 		}
 		pid, _ := strconv.Atoi(parts[8])
+		session := parts[1]
+		if parts[10] != "" {
+			session = parts[10]
+		}
 		row := agentPaneRow{
 			pane: ClaudePane{
 				Pane:        pane,
-				SessionName: parts[1],
+				SessionName: session,
 				WindowName:  parts[3],
 				Host:        exec.HostLabel(),
 				Executor:    exec,
