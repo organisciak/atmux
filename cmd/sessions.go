@@ -79,7 +79,7 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		return switchToPopupTarget()
 	}
 
-	result, err := tui.RunSessionsList(tui.SessionsOptions{
+	result, err := runSessionsHub(tui.SessionsOptions{
 		AltScreen:        !sessionsInline,
 		Executors:        executors,
 		ShowBeads:        !sessionsNoBeads,

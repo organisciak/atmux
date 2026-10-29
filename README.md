@@ -141,6 +141,7 @@ atmux sessions
 ```
 
 - Click or select a session to attach
+- ←/→ (or Tab) move along a strip of atmux's other views (Agents, Tiles, Live, Browse, Recents, Schedule, Setup); Enter opens one, and closing it brings you back
 - Includes local sessions plus configured remote hosts
 - Renders inline by default (use `-p` for popup)
 - Optional host selection and attach strategy:

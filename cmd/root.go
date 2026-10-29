@@ -47,7 +47,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	// Default: show sessions list with current-directory context
-	result, err := tui.RunSessionsList(tui.SessionsOptions{
+	result, err := runSessionsHub(tui.SessionsOptions{
 		AltScreen:      false,
 		CurrentSession: session.Name,
 		CurrentDir:     workingDir,

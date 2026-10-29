@@ -31,6 +31,8 @@ type SessionsOptions struct {
 	DisableStaleness bool                // Disable staleness indicators
 	CurrentSession   string              // Session name for current working directory
 	CurrentDir       string              // Current working directory path
+	Views            []HubView           // Other views, offered as tabs beside the list
+	View             string              // Tab to start on (a view's Name); empty for the list
 }
 
 // SessionsResult contains the outcome of the sessions list interaction.
@@ -40,6 +42,7 @@ type SessionsResult struct {
 	IsFromHistory bool              // True if reviving from history rather than attaching
 	Host          string            // Host label for remote sessions ("" for local)
 	Executor      tmux.TmuxExecutor // The executor for the selected session
+	OpenView      string            // View chosen from the tabs (a HubView Name), empty otherwise
 }
 
 // RunSessionsList runs a simple session list UI and returns the selected session.
@@ -77,6 +80,7 @@ func RunSessionsList(opts SessionsOptions) (*SessionsResult, error) {
 			IsFromHistory: model.isHistorySelection,
 			Host:          model.selectedHost,
 			Executor:      exec,
+			OpenView:      model.openView,
 		}, nil
 	}
 	return &SessionsResult{}, nil
@@ -109,6 +113,11 @@ type sessionsModel struct {
 	killSessionName    string
 	killSessionHost    string
 	lineJump           lineJumpState
+
+	// Tabs for other views; viewTab 0 is the list, i is views[i-1].
+	views    []HubView
+	viewTab  int
+	openView string
 
 	// Staleness
 	stalenessDisabled   bool
@@ -153,7 +162,16 @@ func newSessionsModelWithOpts(opts SessionsOptions) sessionsModel {
 		stalenessDisabled = true
 	}
 
+	viewTab := 0
+	for i, v := range opts.Views {
+		if v.Name == opts.View {
+			viewTab = i + 1
+		}
+	}
+
 	return sessionsModel{
+		views:               opts.Views,
+		viewTab:             viewTab,
 		selectedIndex:       0,
 		executors:           executors,
 		executorMap:         executorMap,
@@ -491,6 +509,9 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if next, cmd, ok := m.handleViewTabKey(msg.String()); ok {
+			return next, cmd
+		}
 		if idx, ok := m.lineJump.consumeKey(msg, len(m.lines)); ok {
 			m.selectedIndex = idx
 			return m, nil
@@ -572,6 +593,9 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if next, cmd, ok := m.handleViewStripClick(msg.X, msg.Y); ok {
+				return next, cmd
+			}
 			// Build a Y-position → item-index mapping that accounts for
 			// all non-selectable rows (title, subtitle, headers, banners).
 			y := 0
@@ -692,7 +716,14 @@ func (m sessionsModel) View() string {
 		return "Loading..."
 	}
 
-	title := lipgloss.NewStyle().Bold(true).Render("Sessions")
+	title := lipgloss.NewStyle().Bold(true).Render(sessionsTabName)
+	if len(m.views) > 0 {
+		title = renderViewStrip(m.views, m.viewTab, m.width)
+	}
+	if v, ok := m.selectedView(); ok {
+		hint := lipgloss.NewStyle().Foreground(dimColor).Render("←→ views, Enter open, Esc back to sessions, q quit")
+		return lipgloss.JoinVertical(lipgloss.Left, title, hint, "", renderViewCard(v, m.width))
+	}
 	vLines := m.visibleLines()
 	vHist := m.visibleHistory()
 	xHint := "x remove"
@@ -700,6 +731,9 @@ func (m sessionsModel) View() string {
 		xHint = "x kill"
 	}
 	subtitleParts := "↑↓ nav, / search, Enter attach, " + xHint
+	if len(m.views) > 0 {
+		subtitleParts = "↑↓ nav, ←→ views, / search, Enter attach, " + xHint
+	}
 	if m.currentDir != "" {
 		subtitleParts += ", r resume"
 	}
