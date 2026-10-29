@@ -184,6 +184,10 @@ type tilePane struct {
 
 func (p tilePane) inTiles() bool { return p.Session == TilesSessionName }
 
+// inAtmuxView reports a pane in any atmux view's session, such as the live
+// browser's display slot, rather than in one of the user's own windows.
+func (p tilePane) inAtmuxView() bool { return strings.HasPrefix(p.Session, "_atmux_") }
+
 func parseTilePanes(output string) []tilePane {
 	var panes []tilePane
 	for _, line := range strings.Split(output, "\n") {
@@ -226,7 +230,9 @@ func planRestore(panes []tilePane) tilesPlan {
 			// Never swapped, or already back.
 			continue
 		}
-		if slot, ok := byID[p.Slot]; ok && !slot.inTiles() {
+		// Follow the stand-in only into the user's own windows: another atmux
+		// view may have borrowed it in the meantime.
+		if slot, ok := byID[p.Slot]; ok && !slot.inAtmuxView() {
 			plan.SwapBack = append(plan.SwapBack, p)
 		} else {
 			plan.SendHome = append(plan.SendHome, p)
@@ -235,12 +241,13 @@ func planRestore(panes []tilePane) tilesPlan {
 	return plan
 }
 
-// orphanedStandIns are stand-ins outside the tiles view after the panes went
-// back: the pane they held a place for has exited.
+// orphanedStandIns are stand-ins left in the user's windows after the panes
+// went back: the pane they held a place for has exited. One lent on to
+// another atmux view is left for that view to return.
 func orphanedStandIns(panes []tilePane) []string {
 	var ids []string
 	for _, p := range panes {
-		if p.HoldsFor != "" && !p.inTiles() {
+		if p.HoldsFor != "" && !p.inAtmuxView() {
 			ids = append(ids, p.ID)
 		}
 	}

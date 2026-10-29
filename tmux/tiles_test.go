@@ -59,6 +59,12 @@ func TestPlanRestore(t *testing.T) {
 			// Options set but never swapped (crash before swap-pane): just release.
 			"%3\tsite\tsite\t%12\t\n" +
 			"%12\t_atmux_tiles\t\t\t%3\n" +
+			// Stand-in lent on to the live browser: send home instead.
+			"%5\t_atmux_tiles\tnotes\t%13\t\n" +
+			"%13\t_atmux_live\t\t\t%5\n" +
+			// Home session renamed while tiled: the stand-in moved with it.
+			"%6\t_atmux_tiles\told-name\t%14\t\n" +
+			"%14\tnew-name\t\t\t%6\n" +
 			// Unrelated pane.
 			"%4\twork\t\t\t\n")
 	plan := planRestore(panes)
@@ -69,13 +75,13 @@ func TestPlanRestore(t *testing.T) {
 		}
 		return out
 	}
-	if got := ids(plan.SwapBack); !reflect.DeepEqual(got, []string{"%1"}) {
+	if got := ids(plan.SwapBack); !reflect.DeepEqual(got, []string{"%1", "%6"}) {
 		t.Errorf("SwapBack = %v", got)
 	}
-	if got := ids(plan.SendHome); !reflect.DeepEqual(got, []string{"%2"}) {
+	if got := ids(plan.SendHome); !reflect.DeepEqual(got, []string{"%2", "%5"}) {
 		t.Errorf("SendHome = %v", got)
 	}
-	if got := ids(plan.Release); !reflect.DeepEqual(got, []string{"%1", "%2", "%3"}) {
+	if got := ids(plan.Release); !reflect.DeepEqual(got, []string{"%1", "%2", "%3", "%5", "%6"}) {
 		t.Errorf("Release = %v", got)
 	}
 }
@@ -84,6 +90,7 @@ func TestOrphanedStandInsAreTheOnesLeftInOtherWindows(t *testing.T) {
 	panes := parseTilePanes(
 		"%10\twork\t\t\t%1\n" + // its pane exited while borrowed
 			"%11\t_atmux_tiles\t\t\t%2\n" + // back in the view, closed with it
+			"%12\t_atmux_live\t\t\t%3\n" + // lent on; the live browser returns it
 			"%4\twork\t\t\t\n")
 	if got := orphanedStandIns(panes); !reflect.DeepEqual(got, []string{"%10"}) {
 		t.Fatalf("got %v", got)
