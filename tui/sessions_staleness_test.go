@@ -75,7 +75,7 @@ func TestStaleSessions(t *testing.T) {
 			{Name: "fresh-session", Activity: now.Add(-10 * time.Minute).Unix()},
 			{Name: "medium-session", Activity: now.Add(-30 * time.Hour).Unix()},
 			{Name: "stale-session-1", Activity: now.Add(-72 * time.Hour).Unix()},
-			{Name: "stale-session-2", Activity: now.Add(-96 * time.Hour).Unix()},
+			{Name: "stale-session-2", Host: "vps", Activity: now.Add(-96 * time.Hour).Unix()},
 		},
 	}
 
@@ -83,11 +83,19 @@ func TestStaleSessions(t *testing.T) {
 	if len(stale) != 2 {
 		t.Fatalf("staleSessions() returned %d sessions, want 2", len(stale))
 	}
-	if stale[0] != "stale-session-1" {
-		t.Errorf("stale[0] = %q, want %q", stale[0], "stale-session-1")
+	if stale[0].Name != "stale-session-1" {
+		t.Errorf("stale[0].Name = %q, want %q", stale[0].Name, "stale-session-1")
 	}
-	if stale[1] != "stale-session-2" {
-		t.Errorf("stale[1] = %q, want %q", stale[1], "stale-session-2")
+	if stale[1].Name != "stale-session-2" {
+		t.Errorf("stale[1].Name = %q, want %q", stale[1].Name, "stale-session-2")
+	}
+	// The host has to survive into the kill batch, or a remote session gets
+	// killed against the local tmux server.
+	if stale[0].Host != "" {
+		t.Errorf("stale[0].Host = %q, want empty (local session)", stale[0].Host)
+	}
+	if stale[1].Host != "vps" {
+		t.Errorf("stale[1].Host = %q, want %q", stale[1].Host, "vps")
 	}
 
 	count := m.staleSessionCount()

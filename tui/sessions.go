@@ -107,6 +107,7 @@ type sessionsModel struct {
 	hostFetch          map[string]hostFetchState // Per-host outcome of the last fetch
 	confirmKill        bool
 	killSessionName    string
+	killSessionHost    string
 	lineJump           lineJumpState
 
 	// Staleness
@@ -115,7 +116,7 @@ type sessionsModel struct {
 	staleThreshold      time.Duration
 	suggestionThreshold int
 	confirmKillStale    bool
-	staleSessionNames   []string
+	staleSessionRefs    []sessionRef
 
 	// Fuzzy search
 	searchActive  bool
@@ -299,7 +300,7 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch keyMsg.String() {
 			case "enter":
 				m.confirmKill = false
-				return m, m.killSession(m.killSessionName)
+				return m, m.killSession(sessionRef{Name: m.killSessionName, Host: m.killSessionHost})
 			case "esc", "n", "N":
 				m.confirmKill = false
 				return m, nil
@@ -314,12 +315,12 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch keyMsg.String() {
 			case "enter":
 				m.confirmKillStale = false
-				names := m.staleSessionNames
-				m.staleSessionNames = nil
-				return m, m.killMultipleSessions(names)
+				refs := m.staleSessionRefs
+				m.staleSessionRefs = nil
+				return m, m.killMultipleSessions(refs)
 			case "esc", "n", "N":
 				m.confirmKillStale = false
-				m.staleSessionNames = nil
+				m.staleSessionRefs = nil
 				return m, nil
 			}
 			return m, nil
@@ -396,6 +397,7 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Refresh sessions and history after killing
 		m.killSessionName = ""
+		m.killSessionHost = ""
 		m.lines = nil
 		m.pendingExecutors = len(m.executors)
 		return m, tea.Batch(
@@ -535,7 +537,7 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				stale := m.staleSessions()
 				if len(stale) > 0 {
 					m.confirmKillStale = true
-					m.staleSessionNames = stale
+					m.staleSessionRefs = stale
 				}
 			}
 			return m, nil
@@ -545,6 +547,7 @@ func (m sessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				line := m.lines[m.selectedIndex]
 				m.confirmKill = true
 				m.killSessionName = line.Name
+				m.killSessionHost = line.Host
 				return m, nil
 			}
 			// History entry: delete from history
@@ -735,10 +738,10 @@ func (m sessionsModel) View() string {
 		header := lipgloss.NewStyle().
 			Foreground(errorColor).
 			Bold(true).
-			Render(fmt.Sprintf("Kill %d stale session(s)? (Enter/Esc)", len(m.staleSessionNames)))
+			Render(fmt.Sprintf("Kill %d stale session(s)? (Enter/Esc)", len(m.staleSessionRefs)))
 		sections = append(sections, header)
-		for _, name := range m.staleSessionNames {
-			sections = append(sections, lipgloss.NewStyle().Foreground(errorColor).Render("  - "+name))
+		for _, ref := range m.staleSessionRefs {
+			sections = append(sections, lipgloss.NewStyle().Foreground(errorColor).Render("  - "+ref.Name))
 		}
 		return lipgloss.JoinVertical(lipgloss.Left, sections...)
 	}
@@ -924,10 +927,31 @@ func (m sessionsModel) deleteSelectedHistoryEntry() tea.Cmd {
 	}
 }
 
-func (m sessionsModel) killSession(name string) tea.Cmd {
+// sessionRef identifies a session together with the host it lives on. Killing
+// needs both: tmux.KillSession runs against the local tmux server regardless of
+// where the session actually is, so a bare name either fails for a remote
+// session or kills a same-named local one.
+type sessionRef struct {
+	Name string
+	Host string
+}
+
+// executorForHost resolves the executor for a session's host, falling back to
+// the local executor for sessions carrying no host label.
+func (m sessionsModel) executorForHost(host string) tmux.TmuxExecutor {
+	if host != "" && m.executorMap != nil {
+		if exec, ok := m.executorMap[host]; ok {
+			return exec
+		}
+	}
+	return tmux.NewLocalExecutor()
+}
+
+func (m sessionsModel) killSession(ref sessionRef) tea.Cmd {
+	exec := m.executorForHost(ref.Host)
 	return func() tea.Msg {
-		err := tmux.KillSession(name)
-		return killSessionMsg{sessionName: name, err: err}
+		err := tmux.KillTargetWithExecutor("session", ref.Name, exec)
+		return killSessionMsg{sessionName: ref.Name, err: err}
 	}
 }
 
@@ -980,14 +1004,14 @@ func stalenessColor(tier stalenessTier) lipgloss.Color {
 }
 
 // staleSessions returns the names of active sessions classified as stale.
-func (m sessionsModel) staleSessions() []string {
-	var names []string
+func (m sessionsModel) staleSessions() []sessionRef {
+	var refs []sessionRef
 	for _, line := range m.lines {
 		if m.sessionStalenessTier(line.Activity) == tierStale {
-			names = append(names, line.Name)
+			refs = append(refs, sessionRef{Name: line.Name, Host: line.Host})
 		}
 	}
-	return names
+	return refs
 }
 
 // staleSessionCount returns the number of stale active sessions.
@@ -1103,10 +1127,18 @@ type killMultipleSessionsMsg struct {
 	err    error
 }
 
-func (m sessionsModel) killMultipleSessions(names []string) tea.Cmd {
+// killMultipleSessions kills a batch that may span several hosts, so each entry
+// is routed through its own host's executor.
+func (m sessionsModel) killMultipleSessions(refs []sessionRef) tea.Cmd {
+	execs := make([]tmux.TmuxExecutor, len(refs))
+	names := make([]string, len(refs))
+	for i, ref := range refs {
+		execs[i] = m.executorForHost(ref.Host)
+		names[i] = ref.Name
+	}
 	return func() tea.Msg {
-		for _, name := range names {
-			if err := tmux.KillSession(name); err != nil {
+		for i, ref := range refs {
+			if err := tmux.KillTargetWithExecutor("session", ref.Name, execs[i]); err != nil {
 				return killMultipleSessionsMsg{killed: names, err: err}
 			}
 		}
