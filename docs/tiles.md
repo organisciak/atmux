@@ -58,4 +58,5 @@ kill the panes it holds.
   remote hosts' agents stay out.
 - Not with `window-size manual`: tmux 3.6b crashes creating any session in
   that mode, and tiles needs one.
-- `atmux keybind --command tiles` binds it to `prefix T`.
+- `atmux keybind --command tiles` binds it to `prefix t`, in place of tmux's
+  clock.

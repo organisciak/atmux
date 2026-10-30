@@ -82,8 +82,8 @@ var keybindTargets = map[string]keybindTarget{
 	"sessions": {"s", "open session list popup"},
 	// Next to s on the keyboard, and unbound in stock tmux.
 	"agents": {"a", "open agents overview (state and recap of every Claude session)"},
-	// Unbound in stock tmux.
-	"tiles": {"T", "tile the most recent Claude Code panes side by side"},
+	// Takes over stock tmux's clock (prefix t), which is rarely missed.
+	"tiles": {"t", "tile the most recent Claude Code panes side by side"},
 }
 
 // resolveKeybind validates --command and applies its default key unless
