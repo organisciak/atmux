@@ -113,3 +113,52 @@ func TestTilesSessionIsHiddenFromSessionLists(t *testing.T) {
 		t.Fatalf("got %+v", lines)
 	}
 }
+
+func TestCopyKeyTableRetargetsEveryBinding(t *testing.T) {
+	in := "bind-key    -T root MouseDown1Pane select-pane -t = \\; send-keys -M\n" +
+		"bind-key -r -T root C-Up resize-pane -U\n\n"
+	want := "bind-key    -T atmux-tiles MouseDown1Pane select-pane -t = \\; send-keys -M\n" +
+		"bind-key -r -T atmux-tiles C-Up resize-pane -U\n"
+	if got := copyKeyTable(in, "root", "atmux-tiles"); got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// display-menu reads name, key, command triples, except that a separator is
+// the empty name alone; a stray argument shifts every later entry.
+func TestTileMenuItemsAreWellFormed(t *testing.T) {
+	items := tileMenuItems(func(flags string) string { return "run-shell " + tmuxDoubleQuote("atmux tiles "+flags) })
+	var names []string
+	for i := 0; i < len(items); {
+		if items[i] == "" {
+			i++
+			continue
+		}
+		if i+2 >= len(items) {
+			t.Fatalf("entry %q is missing its key or command", items[i])
+		}
+		names = append(names, items[i])
+		if len(items[i+1]) != 1 {
+			t.Fatalf("entry %q has key %q", items[i], items[i+1])
+		}
+		i += 3
+	}
+	want := []string{"Zoom", "Put back in its window", "Go to its window", "Close its session"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("entries %v, want %v", names, want)
+	}
+}
+
+func TestFindTile(t *testing.T) {
+	panes := parseTilePanes(
+		"%1\t_atmux_tiles\twork\t%10\t\n" +
+			"%10\twork\t\t\t%1\n" +
+			"%2\twork\t\t\t\n")
+	p, slot, ok := findTile(panes, "%1")
+	if !ok || p.Home != "work" || slot == nil || slot.ID != "%10" {
+		t.Fatalf("findTile(%%1) = %+v, %v, %v", p, slot, ok)
+	}
+	if _, _, ok := findTile(panes, "%2"); ok {
+		t.Fatal("a pane that is not tiled was found")
+	}
+}

@@ -20,6 +20,8 @@ var tilesCmd = &cobra.Command{
 	Long: `Shows your most recently active Claude Code panes as tiles in one window,
 as many as fit (tiles of at least 80x20), working ones first. The tiles are
 the real panes: type into them, scroll them, zoom one with prefix z.
+Right-click a tile to zoom it, put it back, go to its window, or close its
+session.
 
 tmux can show a pane in only one place, so each pane is borrowed: a stand-in
 holds its place in its own window, which otherwise stays exactly as it was.
@@ -34,6 +36,10 @@ var (
 	tilesCount         int
 	tilesRestore       bool
 	tilesStandIn       bool
+	tilesPutBack       string
+	tilesGo            string
+	tilesClient        string
+	tilesClose         string
 	tilesRestoreIfLeft bool
 )
 
@@ -43,6 +49,13 @@ func init() {
 	tilesCmd.Flags().BoolVar(&tilesRestore, "restore", false, "Put every borrowed pane back now")
 	tilesCmd.Flags().BoolVar(&tilesStandIn, "stand-in", false, "Hold a borrowed pane's place (internal)")
 	tilesCmd.Flags().BoolVar(&tilesRestoreIfLeft, "restore-if-left", false, "Put panes back if nobody is viewing the tiles (internal)")
+	tilesCmd.Flags().StringVar(&tilesPutBack, "put-back", "", "Put one tiled pane back in its window (tile menu)")
+	tilesCmd.Flags().StringVar(&tilesGo, "go", "", "Close the tiles and go to this pane's window (tile menu)")
+	tilesCmd.Flags().StringVar(&tilesClient, "client", "", "Client to move with --go (tile menu)")
+	tilesCmd.Flags().StringVar(&tilesClose, "close", "", "Kill the session this tiled pane belongs to (tile menu)")
+	for _, name := range []string{"put-back", "go", "client", "close"} {
+		tilesCmd.Flags().MarkHidden(name)
+	}
 	tilesCmd.Flags().MarkHidden("stand-in")
 	tilesCmd.Flags().MarkHidden("restore-if-left")
 }
@@ -55,6 +68,12 @@ func runTiles(cmd *cobra.Command, args []string) error {
 		return tmux.RestoreTilesIfUnviewed()
 	case tilesStandIn:
 		return runTilesStandIn()
+	case tilesPutBack != "":
+		return tmux.PutBackTile(tilesPutBack)
+	case tilesGo != "":
+		return tmux.GoToTile(tilesGo, tilesClient)
+	case tilesClose != "":
+		return tmux.CloseTiledSession(tilesClose)
 	}
 
 	if !tmuxServerRunning() {
@@ -101,8 +120,7 @@ func runTiles(cmd *cobra.Command, args []string) error {
 		Agents:  recent,
 		Width:   width,
 		Height:  height - 1,
-		StandIn: shellJoin(self, "tiles", "--stand-in"),
-		OnLeave: shellJoin(self, "tiles", "--restore-if-left"),
+		Command: shellJoin(self, "tiles"),
 	})
 	if err != nil {
 		return err
@@ -112,7 +130,7 @@ func runTiles(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		exec.Command("tmux", "display-message", "-d", "5000",
-			fmt.Sprintf("atmux tiles: %d panes. Leave this session to put them back; prefix z zooms one.", borrowed)).Run()
+			fmt.Sprintf("atmux tiles: %d panes. Right-click a tile for options; leave this session to put them back.", borrowed)).Run()
 		return nil
 	}
 	return tmux.AttachToSession(tmux.TilesSessionName)

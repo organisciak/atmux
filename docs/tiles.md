@@ -8,6 +8,28 @@ It fits as many tiles of at least 80×20 as the screen allows, working and
 waiting agents first, then the rest by how recently they finished.
 `--count N` asks for a specific number.
 
+## The tile menu
+
+Right-click a tile for:
+
+| Entry                  | Key | What it does                                          |
+|------------------------|-----|-------------------------------------------------------|
+| Zoom                   | `z` | Fill the window with this tile; again to unzoom        |
+| Put back in its window | `p` | Return this pane now; the other tiles close up         |
+| Go to its window       | `g` | Put every pane back and take you to this one's window  |
+| Close its session      | `x` | After a y/n prompt, kill the session it belongs to, Claude Code included |
+
+The menu opens on a right-click anywhere in a tile. tmux 3.6b sends no
+mouse events for clicks on a pane's heading, so the heading cannot be the
+target. Inside the tiles view a right-click therefore no longer reaches
+Claude Code itself; everywhere else it behaves as before.
+
+The view has its own key table, `atmux-tiles`, set as that session's
+`key-table`. tmux does not fall back from a session's key table to the root
+table, so atmux copies your root table into it whole (scrolling, clicking,
+any `bind -n` keys) and changes only the right-click. The table is removed
+when the view closes.
+
 ## Your windows stay as they were
 
 tmux can show a pane in only one place. To tile a pane, atmux swaps it with

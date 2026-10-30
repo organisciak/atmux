@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -75,13 +76,9 @@ func RecentAgents(agents []AgentPane, now time.Time) []AgentPane {
 type TilesOptions struct {
 	Agents        []AgentPane // Panes to borrow, in tile order
 	Width, Height int         // Size of the window to build
-	// StandIn is the shell command each stand-in runs while it holds a
-	// borrowed pane's place.
-	StandIn string
-	// OnLeave is the shell command the hooks run whenever a client changes
-	// session or detaches; it should put the panes back once no client is
-	// viewing the tiles.
-	OnLeave string
+	// Command is the shell command for "atmux tiles". Stand-ins, the hooks
+	// and the tile menu run it with their own flags.
+	Command string
 }
 
 // OpenTiles builds the tiles view and borrows the panes into it, putting back
@@ -103,7 +100,7 @@ func OpenTiles(opts TilesOptions) (int, error) {
 	out, err := exec.Command("tmux", "new-session", "-d", "-P", "-F", "#{window_id}\t#{pane_id}",
 		"-s", TilesSessionName, "-n", "tiles",
 		"-x", fmt.Sprint(max(opts.Width, 1)), "-y", fmt.Sprint(max(opts.Height, 1)),
-		opts.StandIn).Output()
+		opts.Command+" --stand-in").Output()
 	if err != nil {
 		return 0, fmt.Errorf("could not create the tiles session: %w", err)
 	}
@@ -114,7 +111,7 @@ func OpenTiles(opts TilesOptions) (int, error) {
 	window, standIns := ids[0], []string{ids[1]}
 
 	for len(standIns) < len(opts.Agents) {
-		out, err := exec.Command("tmux", "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", window, opts.StandIn).Output()
+		out, err := exec.Command("tmux", "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", window, opts.Command+" --stand-in").Output()
 		if err != nil {
 			// Out of room: show the ones that fit.
 			break
@@ -148,13 +145,174 @@ func OpenTiles(opts TilesOptions) (int, error) {
 		" #{"+optTileHome+"}  #{pane_title} ").Run()
 	exec.Command("tmux", "select-pane", "-t", first).Run()
 
-	if opts.OnLeave != "" {
-		hook := "run-shell -b " + tmuxDoubleQuote(opts.OnLeave)
-		for _, name := range tilesHooks {
-			exec.Command("tmux", "set-hook", "-g", name, hook).Run()
-		}
+	installTilesMenu(opts.Command)
+
+	hook := "run-shell -b " + tmuxDoubleQuote(opts.Command+" --restore-if-left")
+	for _, name := range tilesHooks {
+		exec.Command("tmux", "set-hook", "-g", name, hook).Run()
 	}
 	return borrowed, nil
+}
+
+// tilesKeyTable holds the tiles view's key bindings: a copy of the root table,
+// so the mouse and any bind -n keys work as everywhere else, with a right-click
+// opening the tile menu. A session's own key table does not fall back to root,
+// which is why the copy has to be whole.
+const tilesKeyTable = "atmux-tiles"
+
+// installTilesMenu gives the tiles view its key table. A right-click selects
+// the tile under the pointer and offers what to do with it.
+func installTilesMenu(command string) {
+	out, err := exec.Command("tmux", "list-keys", "-T", "root").Output()
+	if err != nil {
+		return
+	}
+	f, err := os.CreateTemp("", "atmux-tiles-keys-*.conf")
+	if err != nil {
+		return
+	}
+	defer os.Remove(f.Name())
+	_, err = f.WriteString(copyKeyTable(string(out), "root", tilesKeyTable))
+	f.Close()
+	if err != nil || exec.Command("tmux", "source-file", f.Name()).Run() != nil {
+		// Without a full copy the view would lose the mouse; keep the root
+		// table and go without the menu.
+		exec.Command("tmux", "unbind-key", "-a", "-T", tilesKeyTable).Run()
+		return
+	}
+
+	run := func(flags string) string {
+		return "run-shell " + tmuxDoubleQuote(command+" "+flags)
+	}
+	args := append([]string{"bind-key", "-T", tilesKeyTable, "MouseDown3Pane",
+		// On a command line a bare ";" would end bind-key itself; the
+		// escaped one becomes part of the binding.
+		"select-pane", "-t", "=", `\;`,
+		"display-menu", "-T", "#[align=centre]#{" + optTileHome + "}", "-t", "=", "-x", "M", "-y", "M"},
+		tileMenuItems(run)...)
+	if exec.Command("tmux", args...).Run() != nil {
+		exec.Command("tmux", "unbind-key", "-a", "-T", tilesKeyTable).Run()
+		return
+	}
+	exec.Command("tmux", "set-option", "-t", TilesSessionName, "key-table", tilesKeyTable).Run()
+}
+
+// tileMenuItems are the tile menu's entries as display-menu arguments: name,
+// key, command. run builds a command that runs atmux tiles with flags. The
+// tile under the pointer is the active pane by the time an entry runs.
+func tileMenuItems(run func(flags string) string) []string {
+	closePrompt := "Close session #{" + optTileHome + "}, ending its Claude Code? (y/n)"
+	return []string{
+		"Zoom", "z", "resize-pane -Z",
+		"Put back in its window", "p", run("--put-back #{pane_id}"),
+		"Go to its window", "g", run("--go #{pane_id} --client #{client_name}"),
+		"", // a separator takes just the empty name
+		"Close its session", "x", "confirm-before -p " + tmuxDoubleQuote(closePrompt) + " " +
+			tmuxDoubleQuote(run("--close #{pane_id}")),
+	}
+}
+
+// copyKeyTable rewrites `tmux list-keys -T from` output to bind the same keys
+// in table to.
+func copyKeyTable(listKeys, from, to string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(listKeys, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		b.WriteString(strings.Replace(line, " -T "+from+" ", " -T "+to+" ", 1))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// PutBackTile returns one tiled pane to its own window and closes its tile.
+func PutBackTile(paneID string) error {
+	panes, err := listTilePanes()
+	if err != nil {
+		return err
+	}
+	p, slot, ok := findTile(panes, paneID)
+	if !ok {
+		return fmt.Errorf("%s is not in the tiles view", paneID)
+	}
+	if slot != nil && !slot.inAtmuxView() {
+		if err := exec.Command("tmux", "swap-pane", "-d", "-s", p.ID, "-t", p.Slot).Run(); err != nil {
+			return err
+		}
+		// The stand-in now has the tile; the tile goes with it.
+		exec.Command("tmux", "kill-pane", "-t", p.Slot).Run()
+	} else if !sendPaneHome(p) {
+		return fmt.Errorf("could not put %s back", paneID)
+	}
+	unsetPaneOption(p.ID, optTileHome)
+	unsetPaneOption(p.ID, optTileSlot)
+	return retileOrClose()
+}
+
+// CloseTiledSession kills the session a tiled pane belongs to, together with
+// every pane of it in the tiles view, which a kill-session would miss.
+func CloseTiledSession(paneID string) error {
+	panes, err := listTilePanes()
+	if err != nil {
+		return err
+	}
+	p, _, ok := findTile(panes, paneID)
+	if !ok || p.Home == "" {
+		return fmt.Errorf("%s is not in the tiles view", paneID)
+	}
+	for _, q := range panes {
+		if q.inTiles() && q.Slot != "" && q.Home == p.Home {
+			exec.Command("tmux", "kill-pane", "-t", q.ID).Run()
+		}
+	}
+	exec.Command("tmux", "kill-session", "-t", "="+p.Home).Run()
+	return retileOrClose()
+}
+
+// GoToTile closes the tiles view and takes the client to where the pane lives.
+func GoToTile(paneID, client string) error {
+	if err := RestoreTiles(); err != nil {
+		return err
+	}
+	args := []string{"switch-client", "-t", paneID}
+	if client != "" {
+		args = []string{"switch-client", "-c", client, "-t", paneID}
+	}
+	return exec.Command("tmux", args...).Run()
+}
+
+// findTile returns a pane in the tiles view and, when it still exists, its
+// stand-in.
+func findTile(panes []tilePane, paneID string) (tilePane, *tilePane, bool) {
+	var found *tilePane
+	byID := make(map[string]*tilePane, len(panes))
+	for i := range panes {
+		byID[panes[i].ID] = &panes[i]
+		if panes[i].ID == paneID && panes[i].inTiles() && panes[i].Slot != "" {
+			found = &panes[i]
+		}
+	}
+	if found == nil {
+		return tilePane{}, nil, false
+	}
+	return *found, byID[found.Slot], true
+}
+
+// retileOrClose evens out the remaining tiles, or closes the view when none
+// are left.
+func retileOrClose() error {
+	panes, err := listTilePanes()
+	if err != nil {
+		return err
+	}
+	for _, p := range panes {
+		if p.inTiles() && p.Slot != "" {
+			exec.Command("tmux", "select-layout", "-t", "="+TilesSessionName+":", "tiled").Run()
+			return nil
+		}
+	}
+	return RestoreTiles()
 }
 
 // borrowPane swaps a into the stand-in's place. The options go on first so a
@@ -310,6 +468,7 @@ func RestoreTiles() error {
 	}
 	moveClientsOutOfTiles(home)
 	exec.Command("tmux", "kill-session", "-t", TilesSessionName).Run()
+	exec.Command("tmux", "unbind-key", "-a", "-T", tilesKeyTable).Run()
 	return nil
 }
 
