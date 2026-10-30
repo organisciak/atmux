@@ -2,7 +2,7 @@
 
 ## Improvements to AGENTS.md
 
-Regularly check if AGENTS.md is up to date, and update if it's not. If you learn new useful things that help in understanding the development, add it here. never check in any updates to agents that you make to prevent accidental exfiltration. Always leave it for a human to review unless they explicitly tell you to check the specific file in. 
+Regularly check if AGENTS.md is up to date, and update if it's not. If you learn new useful things that help in understanding the development, add it here, and commit those updates along with the related change. Keep secrets, credentials and personal data out of it.
 
 ## Agent Orchestration
 - When spawning parallel task agents across worktrees, use lightweight/focused agents rather than heavyweight exploratory ones. Agents should start implementing immediately, not spend time exploring the codebase.
@@ -64,6 +64,11 @@ After completing any code change, always run:
 - `atmux sessions` is an interactive list with click-to-attach behavior.
 - `atmux browse` opens a tree-based TUI with pane previews and command sending.
 - `atmux browse --popup` uses a tmux popup overlay (tmux 3.2+).
+- `atmux tiles` (alias `mosaic`) borrows the most recent local Claude panes into `_atmux_tiles` with `swap-pane`, leaving a stand-in in each pane's place. The borrowing is recorded in pane options (`@atmux_tile_home`, `@atmux_tile_slot`, `@atmux_tile_for`), and hooks at index 4747 on `client-session-changed`/`client-detached` put the panes back once no client views the tiles. `swap-pane` is its own inverse, so re-check a pane's session right before swapping it back. `_atmux_tiles` is hidden from session lists because killing it would kill the borrowed panes.
+- The sessions list (`atmux`, `atmux sessions`) has a tab strip of other views; ←/→ or Tab move along it, Enter opens. Add new views to `hubViews` in `cmd/hub.go`.
+- `atmux agents` (aliases `overview`, `recaps`) is a clickable grid of Claude Code panes with state and recap; `--json` is the scripting interface (see `docs/agents-overview.md`). Remote hosts are queried with `atmux agents --json --local`, so keep that flag combination working.
+- `claude/` reads Claude Code's undocumented on-disk state: `~/.claude/sessions/<pid>.json` (status busy/idle/waiting, `waitingFor`, `statusUpdatedAt`, tmux pane id) and transcript `away_summary` entries (recaps). Treat every field as optional; parse failures must degrade to "unknown", never break session listing.
+- Test TUI mouse handling against a separate tmux server (`tmux -L <name>`) with a `script`-backed client, sending SGR mouse sequences via `send-keys -l`. Never exercise `switch-client` from a detached pane on the main server: it can move the user's own client. In that harness: delete a stale `/private/tmp/tmux-$UID/<name>` socket first (otherwise every command reports "server exited unexpectedly"), and never run `new-session` at all while `window-size` is `manual`: tmux 3.6b crashes the whole server, with or without `-x/-y`. Create every session first, then `set -g window-size manual` and `resize-window -x -y`. Send keys with `send-keys -l` (a bare `+` is not delivered as typed).
 
 <!-- bv-agent-instructions-v1 -->
 
