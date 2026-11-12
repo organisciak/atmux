@@ -43,7 +43,7 @@ func init() {
 	sessionsCmd.Flags().BoolVar(&sessionsNoBeads, "no-beads", false, "Hide beads issue counts per session")
 	sessionsCmd.Flags().BoolVar(&sessionsNoStaleness, "no-staleness", false, "Disable staleness indicators and kill-stale")
 	sessionsCmd.Flags().StringVarP(&sessionsRemote, "remote", "r", "", "Remote host(s) or aliases to include (comma-separated)")
-	sessionsCmd.Flags().StringVar(&sessionsStrategy, "strategy", "", "Remote attach strategy: auto, replace, new-window")
+	sessionsCmd.Flags().StringVar(&sessionsStrategy, "strategy", "", "Remote attach strategy: auto, remote-session, replace, new-window")
 }
 
 func runSessions(cmd *cobra.Command, args []string) error {

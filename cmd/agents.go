@@ -115,7 +115,11 @@ func runAgents(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	if result.Executor != nil && result.Executor.IsRemote() {
-		return tmux.AttachToSessionWithExecutor(result.SessionName, result.Executor)
+		// Attaching shows the session's current window, so make the chosen
+		// pane current there first. Best effort: the session still opens.
+		result.Executor.Run("select-window", "-t", result.Target)
+		result.Executor.Run("select-pane", "-t", result.Target)
+		return tmux.AttachToSessionWithStrategy(result.SessionName, result.Executor, resolveAttachStrategy(result.Executor))
 	}
 	return tmux.AttachToSession(result.Target)
 }

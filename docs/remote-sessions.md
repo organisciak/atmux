@@ -15,7 +15,7 @@ The remote executor enables `atmux` commands to target tmux sessions that exist 
 
 Remote execution is currently exposed in multiple commands:
 
-- `atmux sessions [--remote=...] [--strategy=auto|replace|new-window]`
+- `atmux sessions [--remote=...] [--strategy=auto|remote-session|replace|new-window]`
 - `atmux browse --remote=...`
 - `atmux send --remote=... <target> <text>`
 - `atmux recents` (remote history entries reconnect to their saved host)
@@ -116,6 +116,35 @@ atmux never takes that at face value. A "command not found" is retried through
 once, not per command. Interactive attaches settle the mode before taking over
 the terminal, since they cannot retry afterwards. Only when the login shell also
 fails is a host reported as lacking tmux.
+
+## Where a remote session opens
+
+Opening a remote session from inside tmux (from `atmux sessions`, `atmux agents`
+or `atmux recents`) puts it in one local session called `remote`, one window per
+host and session, named like `vps/agent-my-app`. Opening the same remote session
+again switches to its window rather than adding another ssh client. From the
+agents grid, the chosen pane is made current on the remote side first, so you
+land on that agent even when its window is already open.
+
+- The `remote` session is created on first use and closes itself when its last
+  window does; it has `detach-on-destroy off`, so you land on another local
+  session instead of leaving tmux.
+- Windows are found by the `@atmux_remote` window option (`<alias>:<session>`)
+  and the session by `@atmux_remotes`, so renaming either is fine. A local
+  session you named `remote` yourself is left alone (atmux uses `remote-2`).
+- If the connection fails, the window stays open with the exit status until you
+  press Enter. A normal detach closes it.
+- With `window-size manual` the window opens in the current session instead,
+  because tmux 3.6b crashes on `new-session` in that mode.
+
+Strategies (`--strategy`, `remote_attach_strategy` in settings, or per host):
+
+| Strategy | Inside tmux | Outside tmux |
+|---|---|---|
+| `auto` (default) | window in the `remote` session | attach in this terminal |
+| `remote-session` | window in the `remote` session | attach in this terminal |
+| `new-window` | new window in the current session (the old behavior) | attach in this terminal |
+| `replace` | attach in this terminal, nested | attach in this terminal |
 
 ## Rich remote metadata
 

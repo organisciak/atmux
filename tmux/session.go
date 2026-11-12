@@ -495,9 +495,11 @@ func AttachToSessionWithExecutor(name string, exec TmuxExecutor) error {
 // AttachToSessionWithStrategy attaches to a session using the given strategy.
 // For local sessions the strategy is ignored (standard switch-client / attach behavior).
 // For remote sessions:
-//   - auto: new tmux window when inside tmux, direct attach otherwise
+//   - auto: the remote session's window in the local "remote" session when
+//     inside tmux, direct attach otherwise
+//   - remote-session: always that window in the "remote" session
 //   - replace: always attach directly (replaces current terminal)
-//   - new-window: always open a new tmux window for the remote session
+//   - new-window: a new window in the current local session
 func AttachToSessionWithStrategy(name string, executor TmuxExecutor, strategy config.AttachStrategy) error {
 	if name == "" {
 		return nil
@@ -507,48 +509,53 @@ func AttachToSessionWithStrategy(name string, executor TmuxExecutor, strategy co
 	}
 
 	insideTmux := os.Getenv("TMUX") != ""
-
-	switch strategy {
-	case config.AttachStrategyReplace:
-		return executor.Interactive("attach-session", "-t", name)
-	case config.AttachStrategyNewWindow:
-		if !insideTmux {
-			// Can't create a tmux window if we're not inside tmux
-			return executor.Interactive("attach-session", "-t", name)
-		}
-		return attachRemoteInNewWindow(name, executor)
-	default: // auto
-		if insideTmux {
-			return attachRemoteInNewWindow(name, executor)
-		}
+	if !insideTmux || strategy == config.AttachStrategyReplace {
+		// No local tmux to open a window in.
 		return executor.Interactive("attach-session", "-t", name)
 	}
+	if strategy == config.AttachStrategyNewWindow {
+		return attachRemoteInNewWindow(name, executor)
+	}
+	return attachRemoteInRemoteSession(name, executor)
 }
 
-// attachRemoteInNewWindow opens a new local tmux window that runs the remote
-// attach command (SSH or mosh) for the given session.
+// remoteAttachCommand is the shell command that attaches to a remote session
+// over SSH or mosh.
+func remoteAttachCommand(name string, re *RemoteExecutor) string {
+	var shellCmd []string
+	if re.AttachMethod == "mosh" && moshAvailable() {
+		shellCmd = append([]string{"mosh"}, re.buildMoshArgs("attach-session", "-t", name)...)
+	} else {
+		shellCmd = append([]string{"ssh"}, re.buildSSHInteractiveArgs("attach-session", "-t", name)...)
+	}
+	return shellQuoteJoin(shellCmd)
+}
+
+// attachRemoteInNewWindow opens a new local tmux window in the current
+// session that runs the remote attach command for the given session.
 func attachRemoteInNewWindow(name string, executor TmuxExecutor) error {
 	re, ok := executor.(*RemoteExecutor)
 	if !ok {
 		// Fallback: not a RemoteExecutor, attach directly
 		return executor.Interactive("attach-session", "-t", name)
 	}
+	return exec.Command("tmux", "new-window", "-n", "remote:"+name, remoteAttachCommand(name, re)).Run()
+}
 
-	windowName := "remote:" + name
-	var shellCmd []string
-
-	if re.AttachMethod == "mosh" && moshAvailable() {
-		shellCmd = re.buildMoshArgs("attach-session", "-t", name)
-		shellCmd = append([]string{"mosh"}, shellCmd...)
-	} else {
-		shellCmd = re.buildSSHInteractiveArgs("attach-session", "-t", name)
-		shellCmd = append([]string{"ssh"}, shellCmd...)
+// attachRemoteInRemoteSession goes to the remote session's window in the
+// local "remote" session, opening it there if it is not open yet.
+func attachRemoteInRemoteSession(name string, executor TmuxExecutor) error {
+	re, ok := executor.(*RemoteExecutor)
+	if !ok {
+		return executor.Interactive("attach-session", "-t", name)
 	}
-
-	// Join into a single shell string for tmux new-window
-	cmdStr := shellQuoteJoin(shellCmd)
-	tmuxCmd := exec.Command("tmux", "new-window", "-n", windowName, cmdStr)
-	return tmuxCmd.Run()
+	if globalOption("window-size") == "manual" {
+		// tmux 3.6b crashes the server on new-session in this mode, so stay
+		// in the current session.
+		return attachRemoteInNewWindow(name, executor)
+	}
+	re.ensureShellMode()
+	return openRemoteWindow(re.HostLabel(), name, remoteAttachCommand(name, re))
 }
 
 // shellQuoteJoin joins args into a shell command string, quoting args that

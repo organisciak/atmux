@@ -102,6 +102,7 @@ func TestValidAttachStrategy(t *testing.T) {
 		{config.AttachStrategyAuto, true},
 		{config.AttachStrategyReplace, true},
 		{config.AttachStrategyNewWindow, true},
+		{config.AttachStrategyRemoteSession, true},
 		{"", false},
 		{"bogus", false},
 	}

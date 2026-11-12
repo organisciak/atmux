@@ -190,7 +190,7 @@ Behavior:
 - SSH ControlMaster connection reuse (`ControlPersist=300`)
 - 10 second timeout per remote tmux command
 - host keys accepted on first connect (`StrictHostKeyChecking=accept-new`)
-- interactive remote attach supports `remote_attach:ssh|mosh` (and `sessions --strategy=auto|replace|new-window`)
+- interactive remote attach supports `remote_attach:ssh|mosh` (and `sessions --strategy=auto|remote-session|replace|new-window`); inside tmux, remote sessions open as windows in one local `remote` session and are reused when opened again
 
 For full details, see `docs/remote-sessions.md`.
 

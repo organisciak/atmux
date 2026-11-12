@@ -11,18 +11,22 @@ import (
 type AttachStrategy string
 
 const (
-	// AttachStrategyAuto opens a new tmux window when inside tmux, otherwise attaches directly.
+	// AttachStrategyAuto opens the remote session's window in the local
+	// "remote" session when inside tmux, otherwise attaches directly.
 	AttachStrategyAuto AttachStrategy = "auto"
+	// AttachStrategyRemoteSession always uses the local "remote" session: one
+	// window per remote session, reused when it is opened again.
+	AttachStrategyRemoteSession AttachStrategy = "remote-session"
 	// AttachStrategyReplace attaches directly in the current terminal (replaces the TUI).
 	AttachStrategyReplace AttachStrategy = "replace"
-	// AttachStrategyNewWindow always opens a new tmux window for the remote session.
+	// AttachStrategyNewWindow opens a new window in the current local session.
 	AttachStrategyNewWindow AttachStrategy = "new-window"
 )
 
 // ValidAttachStrategy reports whether s is a recognized attach strategy.
 func ValidAttachStrategy(s AttachStrategy) bool {
 	switch s {
-	case AttachStrategyAuto, AttachStrategyReplace, AttachStrategyNewWindow:
+	case AttachStrategyAuto, AttachStrategyRemoteSession, AttachStrategyReplace, AttachStrategyNewWindow:
 		return true
 	}
 	return false
@@ -82,7 +86,7 @@ type Settings struct {
 	DefaultAction string `json:"default_action"`
 
 	// RemoteAttachStrategy controls how remote sessions are attached when inside tmux.
-	// Values: "auto" (default), "replace", "new-window"
+	// Values: "auto" (default), "remote-session", "replace", "new-window"
 	RemoteAttachStrategy AttachStrategy `json:"remote_attach_strategy,omitempty"`
 
 	// Staleness controls session staleness indicators in the sessions TUI.
