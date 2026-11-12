@@ -132,8 +132,11 @@ land on that agent even when its window is already open.
 - Windows are found by the `@atmux_remote` window option (`<alias>:<session>`)
   and the session by `@atmux_remotes`, so renaming either is fine. A local
   session you named `remote` yourself is left alone (atmux uses `remote-2`).
-- If the connection fails, the window stays open with the exit status until you
-  press Enter. A normal detach closes it.
+- If the connection fails or drops (say the laptop slept), the window stays open
+  with the exit status: Enter reconnects, Ctrl-D closes it. Opening that remote
+  session again from atmux reconnects too. A normal detach closes the window.
+  While it waits, the pane has `@atmux_remote_down` set; that is how atmux tells
+  a dead window from a live one without typing into a connected session.
 - With `window-size manual` the window opens in the current session instead,
   because tmux 3.6b crashes on `new-session` in that mode.
 

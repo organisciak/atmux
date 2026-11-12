@@ -1,7 +1,9 @@
 package tmux
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -32,16 +34,36 @@ func TestFindRemoteSession(t *testing.T) {
 	}
 }
 
-func TestHoldOnFailureWaitsOnlyWhenTheConnectionFails(t *testing.T) {
-	out, err := exec.Command("sh", "-c", holdOnFailure("true", "vps")).Output()
+func TestReconnectOnFailure(t *testing.T) {
+	// The loop marks its pane through tmux; keep that off any real server.
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// A clean exit closes the window without a prompt.
+	out, err := exec.Command("sh", "-c", reconnectOnFailure("true", "vps")).Output()
 	if err != nil || len(out) != 0 {
 		t.Fatalf("clean exit: out %q, err %v; want silent", out, err)
 	}
-	cmd := exec.Command("sh", "-c", holdOnFailure("(exit 255)", "it's-a-host"))
+
+	// A failure prompts; Enter retries (here succeeding the second time) and
+	// Ctrl-D (end of input) closes.
+	dir := t.TempDir()
+	flaky := "if [ -e " + dir + "/ok ]; then echo connected; else touch " + dir + "/ok; (exit 255); fi"
+	cmd := exec.Command("sh", "-c", reconnectOnFailure(flaky, "it's-a-host"))
 	cmd.Stdin = strings.NewReader("\n")
 	out, _ = cmd.Output()
-	if !strings.Contains(string(out), "connection to it's-a-host ended with exit status 255") ||
-		!strings.Contains(string(out), "Press Enter") {
-		t.Fatalf("failure message = %q", out)
+	got := string(out)
+	if !strings.Contains(got, "connection to it's-a-host ended with exit status 255") ||
+		!strings.Contains(got, "Press Enter to reconnect") || !strings.HasSuffix(got, "connected\n") {
+		t.Fatalf("retry output = %q", got)
+	}
+
+	cmd = exec.Command("sh", "-c", reconnectOnFailure("(exit 255)", "vps"))
+	cmd.Stdin = strings.NewReader("")
+	if out, err := cmd.Output(); err != nil || strings.Count(string(out), "exit status 255") != 1 {
+		t.Fatalf("Ctrl-D: out %q, err %v; want one prompt and a clean close", out, err)
 	}
 }

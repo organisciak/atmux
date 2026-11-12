@@ -21,6 +21,9 @@ const (
 	// optRemoteWindow names the remote session a window is attached to, as
 	// "<host alias>:<session>".
 	optRemoteWindow = "@atmux_remote"
+	// optRemoteDown is set on a remote window's pane while its connection is
+	// down and it waits at the reconnect prompt.
+	optRemoteDown = "@atmux_remote_down"
 )
 
 // remoteWindowTag identifies a remote session across hosts.
@@ -64,12 +67,21 @@ func findRemoteSession(listSessions string) (id, freeName string) {
 	return "", name
 }
 
-// holdOnFailure keeps the window open when the connection fails, so the error
-// can be read and the window does not vanish before the client switches to it.
-// A normal detach or the remote session ending exits 0 and closes the window.
-func holdOnFailure(command, host string) string {
-	msg := fmt.Sprintf("\\n  atmux: the connection to %s ended with exit status %%d.\\n  Press Enter to close this window.\\n", host)
-	return command + " || { s=$?; printf " + shellSingleQuote(msg) + " \"$s\"; read _; }"
+// reconnectOnFailure keeps the window open when the connection fails or
+// drops (exit status non-zero, e.g. after the laptop sleeps): Enter reconnects
+// and Ctrl-D closes the window. It also keeps a failed first connect from
+// closing the window before the client switches to it. A normal detach, or
+// the remote session ending, exits 0 and closes the window.
+//
+// While it waits at the prompt it sets optRemoteDown on its pane, which is
+// how opening the session again knows to reconnect rather than type into a
+// live connection. It runs under sh whatever the user's default-shell is.
+func reconnectOnFailure(command, host string) string {
+	msg := fmt.Sprintf("\\n  atmux: the connection to %s ended with exit status %%d.\\n  Press Enter to reconnect, or Ctrl-D to close this window.\\n", host)
+	mark := `tmux set-option -p -t "$TMUX_PANE" ` + optRemoteDown
+	script := "while :; do " + command + " && exit 0; s=$?; printf " + shellSingleQuote(msg) + ` "$s"; ` +
+		mark + ` 1 2>/dev/null; read _ || exit 0; ` + mark + ` "" 2>/dev/null; done`
+	return "sh -c " + shellSingleQuote(script)
 }
 
 func shellSingleQuote(s string) string {
@@ -85,6 +97,11 @@ func openRemoteWindow(host, session, command string) error {
 		return fmt.Errorf("list windows: %w", err)
 	}
 	if id := findRemoteWindow(string(out), tag); id != "" {
+		down, _ := exec.Command("tmux", "display-message", "-p", "-t", id, "#{"+optRemoteDown+"}").Output()
+		if strings.TrimSpace(string(down)) == "1" {
+			// Opening it again is asking to reconnect.
+			exec.Command("tmux", "send-keys", "-t", id, "Enter").Run()
+		}
 		return switchToRemoteWindow(id, host)
 	}
 
@@ -93,7 +110,7 @@ func openRemoteWindow(host, session, command string) error {
 		return fmt.Errorf("list sessions: %w", err)
 	}
 	sessionID, name := findRemoteSession(string(out))
-	command = holdOnFailure(command, host)
+	command = reconnectOnFailure(command, host)
 	windowName := remoteWindowName(host, session)
 
 	var created []byte
